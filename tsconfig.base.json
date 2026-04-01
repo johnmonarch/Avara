@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "allowJs": false,
+    "resolveJsonModule": true,
+    "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "strict": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "@avara/shared-types": ["packages/shared-types/src/index.ts"],
+      "@avara/shared-protocol": ["packages/shared-protocol/src/index.ts"],
+      "@avara/level-parser": ["packages/level-parser/src/index.ts"],
+      "@avara/asset-pipeline": ["packages/asset-pipeline/src/index.ts"],
+      "@avara/shared-ui": ["packages/shared-ui/src/index.ts"],
+      "@avara/ads-engine": ["packages/ads-engine/src/index.ts"],
+      "@avara/auth": ["packages/auth/src/index.ts"],
+      "@avara/telemetry": ["packages/telemetry/src/index.ts"]
+    }
+  }
+}

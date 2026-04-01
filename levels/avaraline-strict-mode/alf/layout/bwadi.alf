@@ -52,6 +52,8 @@
 <Wall color="#d9e6ff" color.1="#000000" x="-1" z="44" w="8" d="8" h="4.5" />
 <Ramp y="0" deltaY="4.5" color="#293333" color.1="#000000" x="-1" z="55.5" w="8" d="15" h="0" angle="180" />
 <Ramp y="0" deltaY="4.5" color="#293333" color.1="#000000" x="10.25" z="44" w="14.5" d="8" h="0" angle="90" />
+<Marker kind="ad_billboard" slot="bwadi-north" color="#1a3549" color.1="#7de2ff" x="0" y="7.5" z="-33.5" w="18" h="8" d="0.5" angle="0" />
+<Marker kind="ad_billboard" slot="bwadi-south" color="#1a3549" color.1="#7de2ff" x="0" y="7.5" z="33.5" w="18" h="8" d="0.5" angle="180" />
 
 <unique vars="mShow mTaken" />
 <And in="@start" out="mShow" />

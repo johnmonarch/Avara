@@ -1,0 +1,23 @@
+{
+  "name": "@avara/web-player",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@avara/shared-protocol": "workspace:*",
+    "@avara/shared-types": "workspace:*",
+    "@avara/shared-ui": "workspace:*",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "three": "^0.176.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5"
+  }
+}

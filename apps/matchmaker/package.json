@@ -1,0 +1,12 @@
+{
+  "name": "@avara/matchmaker",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node src/server.ts"
+  },
+  "dependencies": {
+    "@avara/telemetry": "workspace:*"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "@avara/api",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node src/server.ts"
+  },
+  "dependencies": {
+    "@avara/ads-engine": "workspace:*",
+    "@avara/asset-pipeline": "workspace:*",
+    "@avara/auth": "workspace:*",
+    "@avara/level-parser": "workspace:*",
+    "@avara/shared-types": "workspace:*",
+    "@avara/telemetry": "workspace:*"
+  }
+}

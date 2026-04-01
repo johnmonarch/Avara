@@ -1,0 +1,15 @@
+{
+  "name": "@avara/game-server",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node src/server.ts"
+  },
+  "dependencies": {
+    "@avara/level-parser": "workspace:*",
+    "@avara/shared-protocol": "workspace:*",
+    "@avara/shared-types": "workspace:*",
+    "@avara/telemetry": "workspace:*"
+  }
+}

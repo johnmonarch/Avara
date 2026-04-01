@@ -21,3 +21,8 @@ Avara.msvc/x64/
 Avara.msvc/Avara*/
 Avara.msvc/Tests/
 *.vcxproj.user
+node_modules
+dist
+.vite
+coverage
+*.tsbuildinfo

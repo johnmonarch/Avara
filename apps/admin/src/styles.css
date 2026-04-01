@@ -1,0 +1,248 @@
+:root {
+  color-scheme: dark;
+  --bg: #f3eee2;
+  --ink: #f5f7fb;
+  --muted: #93a4b6;
+  --panel: rgba(8, 15, 23, 0.82);
+  --panel-soft: rgba(14, 24, 36, 0.76);
+  --border: rgba(144, 185, 210, 0.18);
+  --accent: #7de2ff;
+  --accent-warm: #ffbe69;
+  --danger: #ff8d82;
+  font-family: "Avenir Next", "Futura", "Trebuchet MS", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--ink);
+  background:
+    linear-gradient(135deg, rgba(255, 190, 105, 0.12), transparent 25%),
+    linear-gradient(225deg, rgba(125, 226, 255, 0.12), transparent 25%),
+    #081018;
+}
+
+button {
+  font: inherit;
+}
+
+.admin-shell {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.admin-sidebar {
+  padding: 28px;
+  background: rgba(6, 10, 15, 0.82);
+  border-right: 1px solid var(--border);
+}
+
+.admin-sidebar h1 {
+  margin: 10px 0 12px;
+  line-height: 1;
+}
+
+.nav-group {
+  display: grid;
+  gap: 10px;
+  margin-top: 30px;
+}
+
+.nav-group button,
+.action-button {
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--panel-soft);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.admin-main {
+  display: grid;
+  gap: 16px;
+  padding: 22px;
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.metric-card,
+.admin-card {
+  border-radius: 24px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.3);
+}
+
+.metric-card {
+  padding: 18px;
+}
+
+.metric-card span {
+  color: var(--muted);
+}
+
+.metric-card strong {
+  display: block;
+  margin-top: 10px;
+  font-size: 2rem;
+}
+
+.admin-card {
+  padding: 18px;
+}
+
+.section-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.eyebrow {
+  color: var(--accent-warm);
+  font-size: 0.8rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 12px 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  color: var(--muted);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.two-column {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr;
+  gap: 18px;
+}
+
+.campaign-list {
+  display: grid;
+  gap: 12px;
+}
+
+.campaign-card {
+  padding: 14px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  text-align: left;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.campaign-card span,
+.campaign-card small {
+  display: block;
+  color: var(--muted);
+}
+
+.campaign-card-active {
+  border-color: rgba(125, 226, 255, 0.4);
+  box-shadow: 0 0 0 1px rgba(125, 226, 255, 0.2) inset;
+}
+
+.campaign-editor {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+.field span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.field input,
+.field select {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--ink);
+}
+
+.editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.validation-good,
+.validation-bad {
+  padding: 16px;
+  border-radius: 18px;
+}
+
+.validation-good {
+  background: rgba(76, 198, 142, 0.12);
+  border: 1px solid rgba(76, 198, 142, 0.28);
+}
+
+.validation-bad {
+  background: rgba(255, 141, 130, 0.12);
+  border: 1px solid rgba(255, 141, 130, 0.3);
+}
+
+.error-text {
+  color: var(--danger);
+}
+
+@media (max-width: 1100px) {
+  .admin-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .metric-grid,
+  .two-column {
+    grid-template-columns: 1fr;
+  }
+
+  .field-grid,
+  .editor-actions {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+}
