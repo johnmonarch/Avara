@@ -43,6 +43,8 @@ services:
       dockerfile: apps/api/Dockerfile
     environment:
       PORT: 8080
+      MATCHMAKER_URL: http://matchmaker:8090
+      GAME_SERVER_URL: ${PUBLIC_GAME_SERVER_URL:-http://localhost:8091}
       POSTGRES_URL: postgres://${POSTGRES_USER:-avara}:${POSTGRES_PASSWORD:-avara}@postgres:5432/${POSTGRES_DB:-avara}
       REDIS_URL: redis://redis:6379
       S3_ENDPOINT: http://minio:9000
@@ -68,7 +70,8 @@ services:
       dockerfile: apps/matchmaker/Dockerfile
     environment:
       PORT: 8090
-      GAME_WORKERS: game-worker-1,game-worker-2
+      GAME_SERVER_URL: ${PUBLIC_GAME_SERVER_URL:-http://localhost:8091}
+      GAME_WORKERS: game-worker-1|${PUBLIC_GAME_SERVER_URL:-http://localhost:8091}|64
     ports:
       - "8090:8090"
     healthcheck:
