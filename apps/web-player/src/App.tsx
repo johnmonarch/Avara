@@ -2,6 +2,8 @@ import { lazy, Suspense, startTransition, useEffect, useMemo, useRef, useState }
 
 import type { SnapshotPacket } from "@avara/shared-protocol";
 import type {
+  AdCampaign,
+  AdPlacementType,
   Identity,
   LevelBillboardAssignment,
   LevelScene,
@@ -16,7 +18,9 @@ import {
   createRoom,
   endRoom,
   ensureGuestIdentity,
+  ensureAdSessionId,
   fetchLevels,
+  fetchLevelAds,
   fetchLevelBillboards,
   fetchLevelScene,
   fetchPrototypeSnapshot,
@@ -29,7 +33,8 @@ import {
   joinPrototypeRoom,
   leaveRoom,
   leavePrototypeRoom,
-  sendPrototypeInput
+  sendPrototypeInput,
+  trackAdEvent
 } from "./lib/api";
 
 const LevelViewport = lazy(() => import("./components/LevelViewport"));
@@ -41,9 +46,16 @@ interface StoredReconnectState {
   savedAt: number;
 }
 
+interface LevelAdsState {
+  lobby: AdCampaign[];
+  loading: AdCampaign[];
+  results: AdCampaign[];
+}
+
 export function App() {
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [levels, setLevels] = useState<LevelSummary[]>([]);
+  const [levelAds, setLevelAds] = useState<LevelAdsState>({ lobby: [], loading: [], results: [] });
   const [rooms, setRooms] = useState<RoomSummary[]>([]);
   const [selectedRoomId, setSelectedRoomId] = useState("");
   const [connectedRoomId, setConnectedRoomId] = useState("");
@@ -64,6 +76,7 @@ export function App() {
   const lookStateRef = useRef({ aimYaw: 0, aimPitch: 0 });
   const queuedActionRef = useRef({ loadMissile: false, loadGrenade: false });
   const fireActiveRef = useRef(false);
+  const reportedAdsRef = useRef(new Set<string>());
 
   const selectedRoom = useMemo(
     () => (selectedRoomId ? rooms.find((room) => room.id === selectedRoomId) ?? null : null),
@@ -81,6 +94,9 @@ export function App() {
     () => snapshot?.players.find((player) => player.id === localPlayerId) ?? null,
     [localPlayerId, snapshot]
   );
+  const activeLobbyCampaign = levelAds.lobby[0] ?? null;
+  const activeLoadingCampaign = levelAds.loading[0] ?? null;
+  const activeResultsCampaign = levelAds.results[0] ?? null;
   const shareInviteUrl = selectedRoom ? buildInviteUrl(selectedRoom.invitePath, selectedRoom.inviteCode) : "";
 
   useEffect(() => {
@@ -89,6 +105,7 @@ export function App() {
     async function bootstrap() {
       try {
         setBusy(true);
+        ensureAdSessionId();
         const nextIdentity = await ensureGuestIdentity();
         const nextLevels = await fetchLevels();
         let nextRooms = await fetchRooms();
@@ -185,15 +202,17 @@ export function App() {
     let cancelled = false;
     setBusy(true);
     setBillboards([]);
-    void fetchLevelScene(activeLevelId)
-      .then((payload) => {
+    setLevelAds({ lobby: [], loading: [], results: [] });
+    void Promise.all([fetchLevelScene(activeLevelId), fetchLevelAds(activeLevelId)])
+      .then(([scenePayload, adsPayload]) => {
         if (cancelled) {
           return;
         }
 
         startTransition(() => {
-          setScene(payload.scene);
-          setBillboards(payload.billboards);
+          setScene(scenePayload.scene);
+          setBillboards(scenePayload.billboards);
+          setLevelAds(adsPayload.ads);
         });
       })
       .catch((nextError) => {
@@ -244,6 +263,33 @@ export function App() {
       window.clearInterval(intervalId);
     };
   }, [activeLevelId, scene]);
+
+  useEffect(() => {
+    for (const billboard of billboards) {
+      if (!billboard.campaignId) {
+        continue;
+      }
+      reportAdImpression(billboard.campaignId, "level_billboard", billboard.slotId);
+    }
+  }, [billboards, activeLevelId]);
+
+  useEffect(() => {
+    if (activeLobbyCampaign) {
+      reportAdImpression(activeLobbyCampaign.id, "lobby_banner");
+    }
+  }, [activeLobbyCampaign?.id, activeLevelId]);
+
+  useEffect(() => {
+    if (busy && activeLoadingCampaign) {
+      reportAdImpression(activeLoadingCampaign.id, "level_loading");
+    }
+  }, [busy, activeLoadingCampaign?.id, activeLevelId]);
+
+  useEffect(() => {
+    if (snapshot?.roomStatus === "ended" && activeResultsCampaign) {
+      reportAdImpression(activeResultsCampaign.id, "results_banner");
+    }
+  }, [snapshot?.roomStatus, activeResultsCampaign?.id, activeLevelId]);
 
   useEffect(() => {
     const trackedKeys = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "ShiftLeft", "ShiftRight", "Space"]);
@@ -549,15 +595,45 @@ export function App() {
     }
   }
 
+  function reportAdImpression(campaignId: string, placementType: AdPlacementType, slotId?: string) {
+    const levelId = activeLevelId || featuredLevel?.id;
+    const key = [campaignId, placementType, levelId ?? "", slotId ?? ""].join(":");
+    if (reportedAdsRef.current.has(key)) {
+      return;
+    }
+    reportedAdsRef.current.add(key);
+    void trackAdEvent({
+      campaignId,
+      placementType,
+      eventType: "impression",
+      levelId,
+      slotId
+    }).catch(() => undefined);
+  }
+
+  function handleAdClick(campaign: AdCampaign, placementType: AdPlacementType, slotId?: string) {
+    if (!campaign.destinationUrl) {
+      return;
+    }
+
+    void trackAdEvent({
+      campaignId: campaign.id,
+      placementType,
+      eventType: "click",
+      levelId: activeLevelId || featuredLevel?.id,
+      slotId
+    }).catch(() => undefined);
+    window.open(campaign.destinationUrl, "_blank", "noopener,noreferrer");
+  }
+
   return (
     <div className="app-shell">
       <aside className="panel panel-left">
         <div className="brand-block">
           <span className="eyebrow">Avara Web</span>
-          <h1>Centralized rooms, invite links, and reconnect on imported classic levels.</h1>
+          <h1>Centralized rooms, playable classic levels, and measured ad placements layered into the web stack.</h1>
           <p>
-            Phase 2 separates room browsing from room connection, adds invite-driven join flow, and keeps a short reconnect
-            window so a refresh does not immediately throw you out of the match.
+            Phase 4 adds lobby, loading, results, and in-level billboard surfaces with session-safe campaign measurement.
           </p>
         </div>
 
@@ -566,7 +642,30 @@ export function App() {
             <h2>Identity</h2>
             <span>{identity?.displayName ?? "Loading guest…"}</span>
           </div>
-          <p>Guest-first onboarding remains intact. Rooms now route through the room service and assigned worker path.</p>
+          <p>Guest-first onboarding remains intact. Rooms route through the room service, while ad events stay session-scoped.</p>
+        </div>
+
+        <div className="card">
+          <div className="card-header">
+            <h2>Lobby banner</h2>
+            <span>{activeLobbyCampaign ? activeLobbyCampaign.name : "House fill"}</span>
+          </div>
+          {activeLobbyCampaign ? (
+            <>
+              <img className="ad-surface" src={activeLobbyCampaign.creativeUrl} alt={activeLobbyCampaign.name} />
+              <div className="pilot-summary">
+                <span>{activeLobbyCampaign.status}</span>
+                <span>{activeLobbyCampaign.frequencyCapPerSession} impressions per session cap</span>
+              </div>
+              {activeLobbyCampaign.destinationUrl ? (
+                <button className="secondary-button" onClick={() => handleAdClick(activeLobbyCampaign, "lobby_banner")}>
+                  Open sponsor
+                </button>
+              ) : null}
+            </>
+          ) : (
+            <p className="muted">No lobby campaign is active for this level right now.</p>
+          )}
         </div>
 
         <div className="card">
@@ -638,6 +737,21 @@ export function App() {
             <span>Match: {snapshot?.roomStatus ?? prototypeStatus}</span>
           </div>
         </div>
+
+        {busy && activeLoadingCampaign ? (
+          <div className="inline-ad-card">
+            <div>
+              <span className="eyebrow">Loading Placement</span>
+              <strong>{activeLoadingCampaign.name}</strong>
+            </div>
+            <img className="ad-surface ad-surface-inline" src={activeLoadingCampaign.creativeUrl} alt={activeLoadingCampaign.name} />
+            {activeLoadingCampaign.destinationUrl ? (
+              <button className="secondary-button" onClick={() => handleAdClick(activeLoadingCampaign, "level_loading")}>
+                Open sponsor
+              </button>
+            ) : null}
+          </div>
+        ) : null}
 
         <Suspense fallback={<div className="viewport-shell viewport-loading">Loading Three.js viewport…</div>}>
           <LevelViewport
@@ -738,12 +852,12 @@ export function App() {
 
         <div className="card">
           <div className="card-header">
-            <h2>Phase 2 flow</h2>
-            <span>Invite + reconnect</span>
+            <h2>Phase 4 flow</h2>
+            <span>Measurement + safety</span>
           </div>
           <p>
-            Browsing a room no longer forces an immediate join. Connect deliberately, share the invite code, and refresh
-            within the reconnect window to resume the same room session.
+            Campaigns can target lobby, loading, results, and level-owned billboard slots. Impression counts are throttled
+            per session so the admin sees usable reporting instead of refresh spam.
           </p>
           {localPlayer ? (
             <div className="pilot-summary">
@@ -753,6 +867,26 @@ export function App() {
             </div>
           ) : (
             <p className="muted">Join a room to receive a live authoritative pilot state.</p>
+          )}
+        </div>
+
+        <div className="card">
+          <div className="card-header">
+            <h2>Results placement</h2>
+            <span>{snapshot?.roomStatus === "ended" ? "Match ended" : "Waiting"}</span>
+          </div>
+          {snapshot?.roomStatus === "ended" && activeResultsCampaign ? (
+            <>
+              <img className="ad-surface" src={activeResultsCampaign.creativeUrl} alt={activeResultsCampaign.name} />
+              <p className="muted">{activeResultsCampaign.name}</p>
+              {activeResultsCampaign.destinationUrl ? (
+                <button className="secondary-button" onClick={() => handleAdClick(activeResultsCampaign, "results_banner")}>
+                  Open sponsor
+                </button>
+              ) : null}
+            </>
+          ) : (
+            <p className="muted">Results campaigns appear here when a match ends.</p>
           )}
         </div>
 

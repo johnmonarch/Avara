@@ -1,10 +1,12 @@
 import type {
   AdCampaign,
+  AdCampaignReport,
   AuditEvent,
   DashboardStats,
   LevelPackageSummary,
   LevelSummary,
   ModerationStatus,
+  OpsSnapshot,
   RoomDetail,
   UploadJob,
   UploadValidationResult
@@ -29,6 +31,15 @@ export async function fetchRooms(): Promise<RoomDetail[]> {
 export async function fetchCampaigns(): Promise<AdCampaign[]> {
   const payload = await apiRequest<{ campaigns: AdCampaign[] }>("/admin/ads/campaigns");
   return payload.campaigns;
+}
+
+export async function fetchAdReports(): Promise<AdCampaignReport[]> {
+  const payload = await apiRequest<{ reports: AdCampaignReport[] }>("/admin/ads/reports");
+  return payload.reports;
+}
+
+export async function fetchOps(): Promise<OpsSnapshot> {
+  return apiRequest<OpsSnapshot>("/admin/ops");
 }
 
 export async function fetchUploadJobs(): Promise<UploadJob[]> {

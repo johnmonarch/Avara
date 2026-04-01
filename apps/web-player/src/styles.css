@@ -321,6 +321,30 @@ select {
   color: var(--muted);
 }
 
+.ad-surface {
+  width: 100%;
+  margin-top: 12px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.inline-ad-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 360px) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 18px;
+  border-radius: 24px;
+  border: 1px solid rgba(255, 209, 121, 0.26);
+  background: rgba(15, 25, 36, 0.82);
+  box-shadow: var(--shadow);
+}
+
+.ad-surface-inline {
+  margin-top: 0;
+}
+
 .loading-ad {
   position: absolute;
   right: 18px;
@@ -476,6 +500,10 @@ select {
   }
 
   .room-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .inline-ad-card {
     grid-template-columns: 1fr;
   }
 }

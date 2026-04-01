@@ -10,6 +10,9 @@ import { createGuestIdentity, DEFAULT_PLAYER_SETTINGS } from "@avara/auth";
 import { discoverLevelCatalog, parseLevelScene } from "@avara/level-parser";
 import type {
   AdCampaign,
+  AdCampaignReport,
+  AdEventType,
+  AdPlacementType,
   AuditEvent,
   DashboardStats,
   Identity,
@@ -17,10 +20,14 @@ import type {
   LevelScene,
   LevelSummary,
   ModerationStatus,
+  OpsSnapshot,
   PlayerSettings,
+  RateLimitSummary,
   RoomDetail,
   RoomPlayer,
   RoomSummary,
+  ServiceHealthSnapshot,
+  ServiceStatus,
   UploadJob
 } from "@avara/shared-types";
 import { log } from "@avara/telemetry";
@@ -34,6 +41,35 @@ const port = Number(process.env.PORT ?? "8080");
 const matchmakerUrl = process.env.MATCHMAKER_URL ?? "http://127.0.0.1:8090";
 const defaultGameServerUrl = process.env.GAME_SERVER_URL ?? "http://127.0.0.1:8091";
 const roomPresenceGraceMs = Number(process.env.ROOM_PRESENCE_GRACE_SECONDS ?? "20") * 1000;
+const buildVersion = process.env.BUILD_VERSION ?? "dev-local";
+const startedAtIso = new Date().toISOString();
+
+interface CampaignMetricsState {
+  campaignId: string;
+  campaignName: string;
+  status: AdCampaign["status"];
+  totalImpressions: number;
+  totalClicks: number;
+  uniqueSessions: Set<string>;
+  lastEventAt: string | null;
+  placementReports: Map<AdPlacementType, { impressions: number; clicks: number }>;
+  levelReports: Map<string, { impressions: number; clicks: number }>;
+}
+
+interface RateLimitWindow {
+  resetAt: number;
+  count: number;
+}
+
+interface RateLimitState {
+  bucket: string;
+  limit: number;
+  windowMs: number;
+  hits: number;
+  blocked: number;
+  lastTriggeredAt: string | null;
+  entries: Map<string, RateLimitWindow>;
+}
 
 let catalog = (await discoverLevelCatalog(levelsRoot)).map(hydrateOfficialLevelSummary);
 const levelsById = new Map(catalog.map((level) => [level.id, level]));
@@ -48,6 +84,16 @@ seedOfficialLevelPackages(catalog, levelPackages, packageIdsByLevelId);
 const adCampaigns: AdCampaign[] = seedCampaigns(catalog);
 const rooms = new Map<string, RoomDetail>();
 const sceneCache = new Map<string, Promise<LevelScene>>();
+const adReports = new Map<string, CampaignMetricsState>();
+const adSessionCounts = new Map<string, number>();
+const rateLimits = new Map<string, RateLimitState>();
+const requestCounts = new Map<string, number>();
+let totalAdImpressions = 0;
+let totalAdClicks = 0;
+let roomCreateCount = 0;
+let roomEndCount = 0;
+let inviteJoinCount = 0;
+let reconnectCount = 0;
 await seedRooms(catalog, rooms);
 
 const server = createServer(async (request, response) => {
@@ -61,14 +107,23 @@ const server = createServer(async (request, response) => {
 
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
     const pathname = decodeURIComponent(url.pathname);
+    recordRequestMetric(request.method ?? "GET", pathname);
 
     if (request.method === "GET" && pathname === "/health") {
       return sendJson(response, 200, {
         service: "api",
         status: "healthy",
+        buildVersion,
+        uptimeSeconds: getUptimeSeconds(),
         importedLevels: catalog.length,
-        rooms: rooms.size
+        rooms: rooms.size,
+        adImpressions: totalAdImpressions,
+        adClicks: totalAdClicks
       });
+    }
+
+    if (request.method === "GET" && pathname === "/metrics") {
+      return sendMetrics(response);
     }
 
     if (request.method === "GET" && pathname.startsWith("/content/")) {
@@ -76,6 +131,10 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === "POST" && pathname === "/auth/guest") {
+      const guestLimit = enforceRateLimit(request, "auth_guest", 6, 60_000);
+      if (!guestLimit.allowed) {
+        return sendJson(response, 429, { error: "Guest identity rate limit exceeded. Try again shortly." });
+      }
       const body = await readJsonBody(request);
       const identity = createGuestIdentity(body?.displayName);
       identities.set(identity.id, identity);
@@ -116,7 +175,8 @@ const server = createServer(async (request, response) => {
     if (request.method === "GET" && pathname.startsWith("/levels/") && pathname.endsWith("/scene")) {
       const levelId = decodeURIComponent(pathname.slice("/levels/".length, -"/scene".length));
       const scene = await loadLevelScene(levelId);
-      const billboards = selectBillboardAssignments(scene, adCampaigns, levelId);
+      const sessionId = normalizeSessionId(url.searchParams.get("session"));
+      const billboards = selectBillboardAssignments(scene, filterCampaignsForSession(adCampaigns, sessionId, levelId, "level_billboard"), levelId);
       return sendJson(response, 200, {
         scene,
         billboards
@@ -126,7 +186,8 @@ const server = createServer(async (request, response) => {
     if (request.method === "GET" && pathname.startsWith("/levels/") && pathname.endsWith("/billboards")) {
       const levelId = decodeURIComponent(pathname.slice("/levels/".length, -"/billboards".length));
       const scene = await loadLevelScene(levelId);
-      const billboards = selectBillboardAssignments(scene, adCampaigns, levelId);
+      const sessionId = normalizeSessionId(url.searchParams.get("session"));
+      const billboards = selectBillboardAssignments(scene, filterCampaignsForSession(adCampaigns, sessionId, levelId, "level_billboard"), levelId);
       return sendJson(response, 200, {
         levelId,
         billboards
@@ -139,17 +200,22 @@ const server = createServer(async (request, response) => {
       if (!level) {
         return sendJson(response, 404, { error: "Level not found" });
       }
+      const sessionId = normalizeSessionId(url.searchParams.get("session"));
       return sendJson(response, 200, {
         level,
         ads: {
-          lobby: selectCampaignsForPlacement(adCampaigns, levelId, "lobby_banner"),
-          loading: selectCampaignsForPlacement(adCampaigns, levelId, "level_loading"),
-          results: selectCampaignsForPlacement(adCampaigns, levelId, "results_banner")
+          lobby: selectCampaignsForPlacement(filterCampaignsForSession(adCampaigns, sessionId, levelId, "lobby_banner"), levelId, "lobby_banner"),
+          loading: selectCampaignsForPlacement(filterCampaignsForSession(adCampaigns, sessionId, levelId, "level_loading"), levelId, "level_loading"),
+          results: selectCampaignsForPlacement(filterCampaignsForSession(adCampaigns, sessionId, levelId, "results_banner"), levelId, "results_banner")
         }
       });
     }
 
     if (request.method === "POST" && pathname === "/levels/uploads") {
+      const uploadLimit = enforceRateLimit(request, "level_upload", 8, 60_000);
+      if (!uploadLimit.allowed) {
+        return sendJson(response, 429, { error: "Upload rate limit exceeded. Try again shortly." });
+      }
       const contentType = getHeaderValue(request, "content-type") ?? "";
       if (contentType.includes("application/json")) {
         const body = await readJsonBody(request);
@@ -291,6 +357,10 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === "POST" && pathname === "/rooms") {
+      const roomLimit = enforceRateLimit(request, "room_create", 10, 60_000);
+      if (!roomLimit.allowed) {
+        return sendJson(response, 429, { error: "Room creation rate limit exceeded. Try again shortly." });
+      }
       const identity = ensureIdentity(request);
       const body = await readJsonBody(request);
       const requestedVisibility = normalizeVisibility(body?.visibility);
@@ -311,6 +381,7 @@ const server = createServer(async (request, response) => {
         playerCap: body?.playerCap
       });
       rooms.set(room.id, room);
+      roomCreateCount += 1;
       log({
         service: "api",
         level: "info",
@@ -329,8 +400,13 @@ const server = createServer(async (request, response) => {
         return sendJson(response, 404, { error: "Invite code not found" });
       }
 
+      const wasPresent = room.players.some((player) => player.id === identity.id);
       upsertRoomPresence(room, identity);
       await touchRoomAssignment(room);
+      inviteJoinCount += 1;
+      if (wasPresent) {
+        reconnectCount += 1;
+      }
       return sendJson(response, 200, { room });
     }
 
@@ -368,8 +444,12 @@ const server = createServer(async (request, response) => {
       if (!isRoomJoinableBy(room, identity)) {
         return sendJson(response, 403, { error: "Room requires an invite" });
       }
+      const wasPresent = room.players.some((player) => player.id === identity.id);
       upsertRoomPresence(room, identity);
       await touchRoomAssignment(room);
+      if (wasPresent) {
+        reconnectCount += 1;
+      }
 
       return sendJson(response, 200, { room });
     }
@@ -416,6 +496,7 @@ const server = createServer(async (request, response) => {
       await terminateGameWorkerRoom(room);
       await releaseRoomAssignment(room.id);
       syncRoomCounts(room);
+      roomEndCount += 1;
       return sendJson(response, 200, { room });
     }
 
@@ -453,6 +534,9 @@ const server = createServer(async (request, response) => {
           (level) => level.moderationStatus === "submitted" || level.moderationStatus === "private_test"
         ).length,
         adCampaignsLive: adCampaigns.filter((campaign) => campaign.status === "live").length,
+        totalAdImpressions,
+        totalAdClicks,
+        buildVersion,
         serverHealth: "healthy",
         importedOfficialLevels: catalog.filter((level) => level.isOfficial).length
       };
@@ -498,6 +582,7 @@ const server = createServer(async (request, response) => {
       await terminateGameWorkerRoom(room);
       await releaseRoomAssignment(room.id);
       syncRoomCounts(room);
+      roomEndCount += 1;
       recordAuditEvent({
         action: "room_terminated",
         actorDisplayName: "Admin panel",
@@ -516,6 +601,16 @@ const server = createServer(async (request, response) => {
       return sendJson(response, 200, { campaigns: adCampaigns });
     }
 
+    if (request.method === "GET" && pathname === "/admin/ads/reports") {
+      return sendJson(response, 200, {
+        reports: buildAdReports()
+      });
+    }
+
+    if (request.method === "GET" && pathname === "/admin/ops") {
+      return sendJson(response, 200, await buildOpsSnapshot());
+    }
+
     if (request.method === "POST" && pathname === "/admin/ads/campaigns") {
       const body = await readJsonBody(request);
       const campaign: AdCampaign = {
@@ -527,6 +622,7 @@ const server = createServer(async (request, response) => {
         billboardSlotIds: normalizeStringArray(body?.billboardSlotIds),
         priority: Number(body?.priority ?? 1),
         rotationSeconds: normalizeRotationSeconds(body?.rotationSeconds),
+        frequencyCapPerSession: normalizeFrequencyCap(body?.frequencyCapPerSession),
         startAt: body?.startAt ?? new Date().toISOString(),
         endAt:
           body?.endAt ??
@@ -567,6 +663,9 @@ const server = createServer(async (request, response) => {
         ...(body?.rotationSeconds !== undefined
           ? { rotationSeconds: normalizeRotationSeconds(body.rotationSeconds) }
           : {}),
+        ...(body?.frequencyCapPerSession !== undefined
+          ? { frequencyCapPerSession: normalizeFrequencyCap(body.frequencyCapPerSession) }
+          : {}),
         ...(typeof body?.startAt === "string" ? { startAt: body.startAt } : {}),
         ...(typeof body?.endAt === "string" ? { endAt: body.endAt } : {}),
         ...(typeof body?.creativeUrl === "string" ? { creativeUrl: body.creativeUrl } : {}),
@@ -586,6 +685,54 @@ const server = createServer(async (request, response) => {
         }
       });
       return sendJson(response, 200, { campaign });
+    }
+
+    if (request.method === "POST" && pathname === "/ads/events") {
+      const adLimit = enforceRateLimit(request, "ads_event", 120, 60_000);
+      if (!adLimit.allowed) {
+        return sendJson(response, 429, { error: "Ad event rate limit exceeded. Try again shortly." });
+      }
+
+      const body = await readJsonBody(request);
+      const campaignId = typeof body?.campaignId === "string" ? body.campaignId : "";
+      const placementType = normalizePlacementType(body?.placementType);
+      const eventType = normalizeAdEventType(body?.eventType);
+      const sessionId = normalizeSessionId(body?.sessionId);
+      const levelId = typeof body?.levelId === "string" ? body.levelId : undefined;
+      const slotId = typeof body?.slotId === "string" ? body.slotId : undefined;
+      if (!campaignId || !placementType || !eventType || !sessionId) {
+        return sendJson(response, 400, { error: "campaignId, placementType, eventType, and sessionId are required" });
+      }
+
+      const campaign = adCampaigns.find((candidate) => candidate.id === campaignId);
+      if (!campaign) {
+        return sendJson(response, 404, { error: "Campaign not found" });
+      }
+      if (!campaign.placementTypes.includes(placementType)) {
+        return sendJson(response, 409, { error: "Campaign is not assigned to this placement" });
+      }
+      if (levelId && campaign.targetLevelIds.length > 0 && !campaign.targetLevelIds.includes(levelId)) {
+        return sendJson(response, 409, { error: "Campaign is not assigned to this level" });
+      }
+
+      const impressionKey = createSessionAdKey(sessionId, campaignId, placementType, levelId, undefined);
+      if (eventType === "impression") {
+        const priorCount = adSessionCounts.get(impressionKey) ?? 0;
+        if (priorCount >= campaign.frequencyCapPerSession) {
+          return sendJson(response, 200, { accepted: false, reason: "frequency_capped" });
+        }
+        adSessionCounts.set(impressionKey, priorCount + 1);
+      }
+
+      recordAdEvent({
+        campaign,
+        eventType,
+        placementType,
+        sessionId,
+        levelId,
+        slotId
+      });
+      return sendJson(response, 202, { accepted: true });
     }
 
     if (request.method === "GET" && pathname === "/admin/audit") {
@@ -749,6 +896,7 @@ function seedCampaigns(levels: LevelSummary[]): AdCampaign[] {
       billboardSlotIds: ["bwadi-north"],
       priority: 10,
       rotationSeconds: 12,
+      frequencyCapPerSession: 3,
       startAt: now.toISOString(),
       endAt: nextMonth.toISOString(),
       creativeUrl: createSvgCreative("ION", "#123756", "#7de2ff", "Freight lines for the outer rim"),
@@ -763,6 +911,7 @@ function seedCampaigns(levels: LevelSummary[]): AdCampaign[] {
       billboardSlotIds: ["bwadi-north"],
       priority: 10,
       rotationSeconds: 12,
+      frequencyCapPerSession: 3,
       startAt: now.toISOString(),
       endAt: nextMonth.toISOString(),
       creativeUrl: createSvgCreative("CUP", "#593116", "#ffbe69", "Refuel before the next frag"),
@@ -777,6 +926,7 @@ function seedCampaigns(levels: LevelSummary[]): AdCampaign[] {
       billboardSlotIds: ["bwadi-south"],
       priority: 9,
       rotationSeconds: 18,
+      frequencyCapPerSession: 3,
       startAt: now.toISOString(),
       endAt: nextMonth.toISOString(),
       creativeUrl: createSvgCreative("MERIDIAN", "#22312b", "#87f0bf", "Hull plates built for impact"),
@@ -791,6 +941,7 @@ function seedCampaigns(levels: LevelSummary[]): AdCampaign[] {
       billboardSlotIds: ["bwadi-south"],
       priority: 9,
       rotationSeconds: 18,
+      frequencyCapPerSession: 3,
       startAt: now.toISOString(),
       endAt: nextMonth.toISOString(),
       creativeUrl: createSvgCreative("VECTOR", "#3b143c", "#e0a7ff", "Faster comms across contested sectors"),
@@ -808,6 +959,278 @@ function loadLevelScene(levelId: string): Promise<LevelScene> {
   const nextScene = parseLevelScene(levelsRoot, levelId);
   sceneCache.set(levelId, nextScene);
   return nextScene;
+}
+
+function filterCampaignsForSession(
+  campaigns: AdCampaign[],
+  sessionId: string | null,
+  levelId: string,
+  placementType: AdPlacementType
+): AdCampaign[] {
+  if (!sessionId) {
+    return campaigns;
+  }
+
+  return campaigns.filter((campaign) => {
+    const key = createSessionAdKey(sessionId, campaign.id, placementType, levelId, undefined);
+    return (adSessionCounts.get(key) ?? 0) < campaign.frequencyCapPerSession;
+  });
+}
+
+function recordAdEvent(input: {
+  campaign: AdCampaign;
+  eventType: AdEventType;
+  placementType: AdPlacementType;
+  sessionId: string;
+  levelId?: string;
+  slotId?: string;
+}): void {
+  const state = getOrCreateCampaignMetrics(input.campaign);
+  const placement = state.placementReports.get(input.placementType) ?? { impressions: 0, clicks: 0 };
+  const levelKey = input.levelId ?? "__unknown__";
+  const level = state.levelReports.get(levelKey) ?? { impressions: 0, clicks: 0 };
+
+  if (input.eventType === "impression") {
+    state.totalImpressions += 1;
+    totalAdImpressions += 1;
+    placement.impressions += 1;
+    level.impressions += 1;
+  } else {
+    state.totalClicks += 1;
+    totalAdClicks += 1;
+    placement.clicks += 1;
+    level.clicks += 1;
+  }
+
+  state.uniqueSessions.add(input.sessionId);
+  state.lastEventAt = new Date().toISOString();
+  state.status = input.campaign.status;
+  state.campaignName = input.campaign.name;
+  state.placementReports.set(input.placementType, placement);
+  state.levelReports.set(levelKey, level);
+
+  log({
+    service: "api",
+    level: "info",
+    event: "ad_event_recorded",
+    payload: {
+      campaignId: input.campaign.id,
+      eventType: input.eventType,
+      placementType: input.placementType,
+      levelId: input.levelId ?? null,
+      slotId: input.slotId ?? null
+    }
+  });
+}
+
+function getOrCreateCampaignMetrics(campaign: AdCampaign): CampaignMetricsState {
+  const existing = adReports.get(campaign.id);
+  if (existing) {
+    return existing;
+  }
+
+  const created: CampaignMetricsState = {
+    campaignId: campaign.id,
+    campaignName: campaign.name,
+    status: campaign.status,
+    totalImpressions: 0,
+    totalClicks: 0,
+    uniqueSessions: new Set<string>(),
+    lastEventAt: null,
+    placementReports: new Map(),
+    levelReports: new Map()
+  };
+  adReports.set(campaign.id, created);
+  return created;
+}
+
+function buildAdReports(): AdCampaignReport[] {
+  for (const campaign of adCampaigns) {
+    const state = getOrCreateCampaignMetrics(campaign);
+    state.campaignName = campaign.name;
+    state.status = campaign.status;
+  }
+
+  return Array.from(adReports.values())
+    .map((state) => ({
+      campaignId: state.campaignId,
+      campaignName: state.campaignName,
+      status: state.status,
+      totalImpressions: state.totalImpressions,
+      totalClicks: state.totalClicks,
+      uniqueSessions: state.uniqueSessions.size,
+      ctr: state.totalImpressions > 0 ? state.totalClicks / state.totalImpressions : 0,
+      lastEventAt: state.lastEventAt,
+      placementReports: Array.from(state.placementReports.entries()).map(([placementType, metrics]) => ({
+        placementType,
+        impressions: metrics.impressions,
+        clicks: metrics.clicks
+      })),
+      levelReports: Array.from(state.levelReports.entries()).map(([reportedLevelId, metrics]) => ({
+        levelId: reportedLevelId,
+        impressions: metrics.impressions,
+        clicks: metrics.clicks
+      }))
+    }))
+    .sort((left, right) => right.totalImpressions - left.totalImpressions || left.campaignName.localeCompare(right.campaignName));
+}
+
+async function buildOpsSnapshot(): Promise<OpsSnapshot> {
+  const [matchmakerHealth, gameServerHealth] = await Promise.all([
+    fetchServiceHealth("matchmaker", matchmakerUrl),
+    fetchServiceHealth("game-server", defaultGameServerUrl)
+  ]);
+
+  const selfHealth: ServiceHealthSnapshot = {
+    service: "api",
+    status: "healthy",
+    buildVersion,
+    uptimeSeconds: getUptimeSeconds(),
+    detail: {
+      rooms: rooms.size,
+      uploads: uploadJobs.size,
+      campaigns: adCampaigns.length
+    }
+  };
+
+  return {
+    buildVersion,
+    startedAt: startedAtIso,
+    serviceHealth: [selfHealth, matchmakerHealth, gameServerHealth],
+    rateLimits: buildRateLimitSummaries(),
+    roomLifecycle: {
+      created: roomCreateCount,
+      ended: roomEndCount,
+      inviteJoins: inviteJoinCount,
+      reconnects: reconnectCount,
+      active: rooms.size
+    },
+    adTotals: {
+      impressions: totalAdImpressions,
+      clicks: totalAdClicks,
+      trackedCampaigns: adReports.size
+    },
+    backupRoot: uploadArchiveRoot,
+    uploadArchiveCount: Array.from(levelPackages.values()).filter((entry) => entry.storagePath).length
+  };
+}
+
+async function fetchServiceHealth(service: string, baseUrl: string): Promise<ServiceHealthSnapshot> {
+  try {
+    const payload = await requestJson<Record<string, unknown>>(`${baseUrl}/health`);
+    const status = normalizeServiceStatus(payload.status);
+    return {
+      service,
+      status,
+      buildVersion: typeof payload.buildVersion === "string" ? payload.buildVersion : "unknown",
+      uptimeSeconds: typeof payload.uptimeSeconds === "number" ? payload.uptimeSeconds : null,
+      detail: payload
+    };
+  } catch (error) {
+    return {
+      service,
+      status: "offline",
+      buildVersion: "unreachable",
+      uptimeSeconds: null,
+      detail: {
+        error: error instanceof Error ? error.message : String(error),
+        target: baseUrl
+      }
+    };
+  }
+}
+
+function normalizeServiceStatus(value: unknown): ServiceStatus {
+  return value === "healthy" || value === "degraded" || value === "offline" ? value : "degraded";
+}
+
+function buildRateLimitSummaries(): RateLimitSummary[] {
+  return Array.from(rateLimits.values())
+    .map((state) => ({
+      bucket: state.bucket,
+      limit: state.limit,
+      windowMs: state.windowMs,
+      hits: state.hits,
+      blocked: state.blocked,
+      lastTriggeredAt: state.lastTriggeredAt
+    }))
+    .sort((left, right) => right.blocked - left.blocked || left.bucket.localeCompare(right.bucket));
+}
+
+function enforceRateLimit(
+  request: IncomingMessage,
+  bucket: string,
+  limit: number,
+  windowMs: number
+): { allowed: boolean; remaining: number } {
+  const key = getRateLimitKey(request, bucket);
+  let state = rateLimits.get(bucket);
+  if (!state) {
+    state = {
+      bucket,
+      limit,
+      windowMs,
+      hits: 0,
+      blocked: 0,
+      lastTriggeredAt: null,
+      entries: new Map()
+    };
+    rateLimits.set(bucket, state);
+  }
+
+  const now = Date.now();
+  const window = state.entries.get(key);
+  if (!window || window.resetAt <= now) {
+    state.entries.set(key, {
+      resetAt: now + windowMs,
+      count: 1
+    });
+    state.hits += 1;
+    return { allowed: true, remaining: limit - 1 };
+  }
+
+  if (window.count >= limit) {
+    state.blocked += 1;
+    state.lastTriggeredAt = new Date().toISOString();
+    log({
+      service: "api",
+      level: "warn",
+      event: "rate_limit_triggered",
+      payload: { bucket, key }
+    });
+    return { allowed: false, remaining: 0 };
+  }
+
+  window.count += 1;
+  state.hits += 1;
+  return { allowed: true, remaining: Math.max(0, limit - window.count) };
+}
+
+function getRateLimitKey(request: IncomingMessage, bucket: string): string {
+  const identityId = getIdentityIdFromRequest(request);
+  const forwardedFor = getHeaderValue(request, "x-forwarded-for");
+  const remoteAddress = request.socket.remoteAddress ?? "unknown";
+  return `${bucket}:${identityId ?? forwardedFor ?? remoteAddress}`;
+}
+
+function recordRequestMetric(method: string, pathname: string): void {
+  const normalizedPath = pathname.replace(/\/rooms\/[^/]+/g, "/rooms/:id").replace(/\/levels\/[^/]+/g, "/levels/:id");
+  const key = `${method} ${normalizedPath}`;
+  requestCounts.set(key, (requestCounts.get(key) ?? 0) + 1);
+}
+
+function getUptimeSeconds(): number {
+  return Math.max(0, Math.round((Date.now() - Date.parse(startedAtIso)) / 1000));
+}
+
+function createSessionAdKey(
+  sessionId: string,
+  campaignId: string,
+  placementType: AdPlacementType,
+  levelId?: string,
+  slotId?: string
+): string {
+  return [sessionId, campaignId, placementType, levelId ?? "", slotId ?? ""].join(":");
 }
 
 function seedOfficialLevelPackages(
@@ -1088,6 +1511,16 @@ function normalizePlacementTypes(value: unknown, fallback: AdCampaign["placement
   return filtered.length ? filtered : fallback;
 }
 
+function normalizePlacementType(value: unknown): AdPlacementType | null {
+  return value === "lobby_banner" || value === "level_loading" || value === "results_banner" || value === "level_billboard"
+    ? value
+    : null;
+}
+
+function normalizeAdEventType(value: unknown): AdEventType | null {
+  return value === "impression" || value === "click" ? value : null;
+}
+
 function normalizeStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return [];
@@ -1102,6 +1535,20 @@ function normalizeStringArray(value: unknown): string[] {
 function normalizeRotationSeconds(value: unknown): number {
   const numeric = Number(value ?? 30);
   return Number.isFinite(numeric) ? Math.max(5, Math.round(numeric)) : 30;
+}
+
+function normalizeFrequencyCap(value: unknown): number {
+  const numeric = Number(value ?? 3);
+  return Number.isFinite(numeric) ? Math.max(1, Math.min(12, Math.round(numeric))) : 3;
+}
+
+function normalizeSessionId(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length >= 6 ? trimmed.slice(0, 128) : null;
 }
 
 function createSvgCreative(title: string, background: string, accent: string, subtitle: string): string {
@@ -1145,7 +1592,7 @@ async function assignRoomToWorker(roomId: string, playerCap: number) {
   } catch (error) {
     log({
       service: "api",
-      level: "warning",
+      level: "warn",
       event: "matchmaker_assignment_failed",
       payload: { roomId, message: error instanceof Error ? error.message : String(error) }
     });
@@ -1276,6 +1723,34 @@ function setCorsHeaders(response: { setHeader(name: string, value: string): void
   response.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,OPTIONS");
 }
 
+function sendMetrics(response: ServerResponse): void {
+  const lines = [
+    "# HELP avara_api_build_info Build information for the API service",
+    `avara_api_build_info{version="${escapeMetricsLabel(buildVersion)}"} 1`,
+    "# HELP avara_api_active_rooms Current active room count",
+    `avara_api_active_rooms ${rooms.size}`,
+    "# HELP avara_api_levels_total Total imported level count",
+    `avara_api_levels_total ${catalog.length}`,
+    "# HELP avara_api_upload_jobs_total Total upload jobs tracked",
+    `avara_api_upload_jobs_total ${uploadJobs.size}`,
+    "# HELP avara_api_ad_impressions_total Total ad impressions recorded",
+    `avara_api_ad_impressions_total ${totalAdImpressions}`,
+    "# HELP avara_api_ad_clicks_total Total ad clicks recorded",
+    `avara_api_ad_clicks_total ${totalAdClicks}`,
+    "# HELP avara_api_rate_limit_rejections_total Total blocked requests by rate limiting",
+    `avara_api_rate_limit_rejections_total ${Array.from(rateLimits.values()).reduce((sum, state) => sum + state.blocked, 0)}`,
+    "# HELP avara_api_request_total Total API requests by route",
+    ...Array.from(requestCounts.entries()).map(
+      ([key, count]) => `avara_api_request_total{route="${escapeMetricsLabel(key)}"} ${count}`
+    )
+  ];
+
+  response.writeHead(200, {
+    "Content-Type": "text/plain; version=0.0.4; charset=utf-8"
+  });
+  response.end(`${lines.join("\n")}\n`);
+}
+
 function sendJson(
   response: {
     writeHead(statusCode: number, headers: Record<string, string>): void;
@@ -1288,6 +1763,10 @@ function sendJson(
     "Content-Type": "application/json; charset=utf-8"
   });
   response.end(JSON.stringify(payload, null, 2));
+}
+
+function escapeMetricsLabel(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
 function syncRoomCounts(room: RoomDetail): void {

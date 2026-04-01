@@ -29,6 +29,8 @@ const fragLimit = Number(process.env.FRAG_LIMIT ?? "5");
 const respawnSeconds = Number(process.env.RESPAWN_SECONDS ?? "3");
 const pickupRespawnSeconds = Number(process.env.PICKUP_RESPAWN_SECONDS ?? "12");
 const disconnectGraceSeconds = Number(process.env.DISCONNECT_GRACE_SECONDS ?? "20");
+const buildVersion = process.env.BUILD_VERSION ?? "dev-local";
+const startedAt = Date.now();
 
 const PLAYER_RADIUS = 1.2;
 const MAX_STEP_HEIGHT = 1.4;
@@ -157,6 +159,7 @@ interface RoomState {
 }
 
 const rooms = new Map<string, RoomState>();
+const requestCounts = new Map<string, number>();
 
 setInterval(() => {
   const dt = 1 / tickRate;
@@ -195,14 +198,21 @@ createServer(async (request, response) => {
     }
 
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
+    recordRequestMetric(request.method ?? "GET", url.pathname);
 
     if (request.method === "GET" && url.pathname === "/health") {
       return sendJson(response, 200, {
         service: "game-server",
         status: "healthy",
+        buildVersion,
+        uptimeSeconds: getUptimeSeconds(),
         protocolVersion: PROTOCOL_VERSION,
         rooms: rooms.size
       });
+    }
+
+    if (request.method === "GET" && url.pathname === "/metrics") {
+      return sendMetrics(response);
     }
 
     if (request.method === "POST" && url.pathname === "/rooms/bootstrap") {
@@ -389,7 +399,7 @@ createServer(async (request, response) => {
     service: "game-server",
     level: "info",
     event: "server_started",
-    payload: { host, port, tickRate, protocolVersion: PROTOCOL_VERSION }
+    payload: { host, port, tickRate, protocolVersion: PROTOCOL_VERSION, buildVersion }
   });
 });
 
@@ -1231,10 +1241,52 @@ function sendJson(
   response.end(JSON.stringify(payload, null, 2));
 }
 
+function sendMetrics(
+  response: {
+    writeHead(statusCode: number, headers: Record<string, string>): void;
+    end(body: string): void;
+  }
+): void {
+  const lines = [
+    "# HELP avara_game_server_build_info Build information for the game server",
+    `avara_game_server_build_info{version="${escapeMetricsLabel(buildVersion)}"} 1`,
+    "# HELP avara_game_server_rooms_total Current game worker room count",
+    `avara_game_server_rooms_total ${rooms.size}`,
+    "# HELP avara_game_server_players_total Current connected player count",
+    `avara_game_server_players_total ${Array.from(rooms.values()).reduce((sum, room) => sum + room.players.size, 0)}`,
+    "# HELP avara_game_server_request_total Total requests by route",
+    ...Array.from(requestCounts.entries()).map(
+      ([route, count]) => `avara_game_server_request_total{route="${escapeMetricsLabel(route)}"} ${count}`
+    )
+  ];
+
+  response.writeHead(200, {
+    "Content-Type": "text/plain; version=0.0.4; charset=utf-8",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS"
+  });
+  response.end(`${lines.join("\n")}\n`);
+}
+
 function setCorsHeaders(response: { setHeader(name: string, value: string): void }): void {
   response.setHeader("Access-Control-Allow-Origin", "*");
   response.setHeader("Access-Control-Allow-Headers", "Content-Type");
   response.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+}
+
+function recordRequestMetric(method: string, pathname: string): void {
+  const normalized = pathname.replace(/\/rooms\/[^/]+/g, "/rooms/:id");
+  const key = `${method} ${normalized}`;
+  requestCounts.set(key, (requestCounts.get(key) ?? 0) + 1);
+}
+
+function getUptimeSeconds(): number {
+  return Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+}
+
+function escapeMetricsLabel(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
 function asNumber(value: unknown): number | undefined {

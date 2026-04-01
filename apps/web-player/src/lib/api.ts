@@ -1,5 +1,8 @@
 import type { SnapshotPacket } from "@avara/shared-protocol";
 import type {
+  AdCampaign,
+  AdEventType,
+  AdPlacementType,
   Identity,
   LevelBillboardAssignment,
   LevelScene,
@@ -12,6 +15,7 @@ import type {
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080";
 const GAME_SERVER_URL = import.meta.env.VITE_GAME_SERVER_URL ?? "http://localhost:8091";
 const identityStorageKey = "avara-web-player-id";
+const adSessionStorageKey = "avara-web-player-ad-session";
 
 export interface PrototypeInputState {
   moveForward: number;
@@ -74,16 +78,37 @@ export async function fetchRoomByInvite(inviteCode: string): Promise<RoomDetail>
 }
 
 export async function fetchLevelScene(levelId: string): Promise<{ scene: LevelScene; billboards: LevelBillboardAssignment[] }> {
+  const sessionId = ensureAdSessionId();
   return apiRequest<{ scene: LevelScene; billboards: LevelBillboardAssignment[] }>(
-    `/levels/${encodeURIComponent(levelId)}/scene`
+    `/levels/${encodeURIComponent(levelId)}/scene?session=${encodeURIComponent(sessionId)}`
   );
 }
 
 export async function fetchLevelBillboards(levelId: string): Promise<LevelBillboardAssignment[]> {
+  const sessionId = ensureAdSessionId();
   const payload = await apiRequest<{ levelId: string; billboards: LevelBillboardAssignment[] }>(
-    `/levels/${encodeURIComponent(levelId)}/billboards`
+    `/levels/${encodeURIComponent(levelId)}/billboards?session=${encodeURIComponent(sessionId)}`
   );
   return payload.billboards;
+}
+
+export async function fetchLevelAds(levelId: string): Promise<{
+  level: LevelSummary;
+  ads: {
+    lobby: AdCampaign[];
+    loading: AdCampaign[];
+    results: AdCampaign[];
+  };
+}> {
+  const sessionId = ensureAdSessionId();
+  return apiRequest<{
+    level: LevelSummary;
+    ads: {
+      lobby: AdCampaign[];
+      loading: AdCampaign[];
+      results: AdCampaign[];
+    };
+  }>(`/levels/${encodeURIComponent(levelId)}?session=${encodeURIComponent(sessionId)}`);
 }
 
 export async function createRoom(levelId: string, name: string, visibility: Visibility): Promise<RoomDetail> {
@@ -193,6 +218,33 @@ export async function sendPrototypeInput(
 
 export async function fetchPrototypeSnapshot(room: Pick<RoomSummary, "id" | "gameServerUrl">): Promise<SnapshotPacket> {
   return gameRequest<SnapshotPacket>(room.gameServerUrl, `/rooms/${encodeURIComponent(room.id)}/snapshot`);
+}
+
+export async function trackAdEvent(input: {
+  campaignId: string;
+  placementType: AdPlacementType;
+  eventType: AdEventType;
+  levelId?: string;
+  slotId?: string;
+}): Promise<void> {
+  await apiRequest("/ads/events", {
+    method: "POST",
+    body: JSON.stringify({
+      ...input,
+      sessionId: ensureAdSessionId()
+    })
+  });
+}
+
+export function ensureAdSessionId(): string {
+  const existing = window.localStorage.getItem(adSessionStorageKey);
+  if (existing) {
+    return existing;
+  }
+
+  const created = `ad-session-${crypto.randomUUID()}`;
+  window.localStorage.setItem(adSessionStorageKey, created);
+  return created;
 }
 
 function identityHeaders(): Record<string, string> {

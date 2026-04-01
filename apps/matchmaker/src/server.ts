@@ -4,6 +4,8 @@ import { log } from "@avara/telemetry";
 
 const port = Number(process.env.PORT ?? "8090");
 const defaultGameServerUrl = process.env.GAME_SERVER_URL ?? "http://127.0.0.1:8091";
+const buildVersion = process.env.BUILD_VERSION ?? "dev-local";
+const startedAt = Date.now();
 
 interface WorkerState {
   id: string;
@@ -24,13 +26,18 @@ interface RoomAssignment {
 
 const workers = parseWorkers(process.env.GAME_WORKERS ?? `game-worker-1|${defaultGameServerUrl}|64`);
 const assignments = new Map<string, RoomAssignment>();
+const requestCounts = new Map<string, number>();
 
 createServer(async (request, response) => {
   try {
+    recordRequestMetric(request.method ?? "GET", request.url ?? "/");
+
     if (request.method === "GET" && request.url === "/health") {
       return sendJson(response, 200, {
         service: "matchmaker",
         status: "healthy",
+        buildVersion,
+        uptimeSeconds: getUptimeSeconds(),
         workers: workers.map((worker) => ({
           id: worker.id,
           gameServerUrl: worker.gameServerUrl,
@@ -40,6 +47,10 @@ createServer(async (request, response) => {
         })),
         assignedRooms: assignments.size
       });
+    }
+
+    if (request.method === "GET" && request.url === "/metrics") {
+      return sendMetrics(response);
     }
 
     if (request.method === "POST" && request.url === "/assign-room") {
@@ -211,4 +222,35 @@ function sendJson(
     "Content-Type": "application/json; charset=utf-8"
   });
   response.end(JSON.stringify(payload, null, 2));
+}
+
+function sendMetrics(response: { writeHead(statusCode: number, headers: Record<string, string>): void; end(body: string): void }): void {
+  const lines = [
+    "# HELP avara_matchmaker_build_info Build information for the matchmaker service",
+    `avara_matchmaker_build_info{version="${escapeMetricsLabel(buildVersion)}"} 1`,
+    "# HELP avara_matchmaker_assignments_total Current room assignments",
+    `avara_matchmaker_assignments_total ${assignments.size}`,
+    "# HELP avara_matchmaker_request_total Total requests by route",
+    ...Array.from(requestCounts.entries()).map(
+      ([route, count]) => `avara_matchmaker_request_total{route="${escapeMetricsLabel(route)}"} ${count}`
+    )
+  ];
+  response.writeHead(200, {
+    "Content-Type": "text/plain; version=0.0.4; charset=utf-8"
+  });
+  response.end(`${lines.join("\n")}\n`);
+}
+
+function recordRequestMetric(method: string, pathname: string): void {
+  const normalized = pathname.replace(/\/rooms\/[^/]+/g, "/rooms/:id");
+  const key = `${method} ${normalized}`;
+  requestCounts.set(key, (requestCounts.get(key) ?? 0) + 1);
+}
+
+function getUptimeSeconds(): number {
+  return Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+}
+
+function escapeMetricsLabel(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }

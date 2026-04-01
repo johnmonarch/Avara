@@ -2,11 +2,13 @@ import { useEffect, useState, type FormEvent } from "react";
 
 import type {
   AdCampaign,
+  AdCampaignReport,
   AuditEvent,
   DashboardStats,
   LevelPackageSummary,
   LevelSummary,
   ModerationStatus,
+  OpsSnapshot,
   RoomDetail,
   UploadJob,
   UploadValidationResult
@@ -14,10 +16,12 @@ import type {
 
 import {
   createCampaign,
+  fetchAdReports,
   fetchAuditEvents,
   fetchCampaigns,
   fetchDashboard,
   fetchLevels,
+  fetchOps,
   fetchPackages,
   fetchRooms,
   fetchUploadJobs,
@@ -29,12 +33,14 @@ import {
 interface CampaignDraft {
   name: string;
   status: AdCampaign["status"];
+  placementTypes: AdCampaign["placementTypes"];
   targetLevelId: string;
   slotIds: string;
   creativeUrl: string;
   destinationUrl: string;
   rotationSeconds: string;
   priority: string;
+  frequencyCapPerSession: string;
 }
 
 interface UploadResult {
@@ -56,10 +62,12 @@ const moderationStates: ModerationStatus[] = [
 
 export function App() {
   const [dashboard, setDashboard] = useState<DashboardStats | null>(null);
+  const [ops, setOps] = useState<OpsSnapshot | null>(null);
   const [levels, setLevels] = useState<LevelSummary[]>([]);
   const [packages, setPackages] = useState<LevelPackageSummary[]>([]);
   const [rooms, setRooms] = useState<RoomDetail[]>([]);
   const [campaigns, setCampaigns] = useState<AdCampaign[]>([]);
+  const [reports, setReports] = useState<AdCampaignReport[]>([]);
   const [uploads, setUploads] = useState<UploadJob[]>([]);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [latestUpload, setLatestUpload] = useState<UploadResult | null>(null);
@@ -81,22 +89,26 @@ export function App() {
     try {
       setLoading(true);
       setError("");
-      const [nextDashboard, nextLevels, nextPackages, nextRooms, nextCampaigns, nextUploads, nextAuditEvents] =
+      const [nextDashboard, nextOps, nextLevels, nextPackages, nextRooms, nextCampaigns, nextReports, nextUploads, nextAuditEvents] =
         await Promise.all([
           fetchDashboard(),
+          fetchOps(),
           fetchLevels(),
           fetchPackages(),
           fetchRooms(),
           fetchCampaigns(),
+          fetchAdReports(),
           fetchUploadJobs(),
           fetchAuditEvents()
         ]);
 
       setDashboard(nextDashboard);
+      setOps(nextOps);
       setLevels(nextLevels);
       setPackages(nextPackages);
       setRooms(nextRooms);
       setCampaigns(sortCampaigns(nextCampaigns));
+      setReports(nextReports);
       setUploads(nextUploads);
       setAuditEvents(nextAuditEvents);
       setCampaignDraft((current) =>
@@ -158,13 +170,14 @@ export function App() {
       const payload = {
         name: campaignDraft.name.trim() || "New billboard campaign",
         status: campaignDraft.status,
-        placementTypes: ["level_billboard"] as const,
+        placementTypes: campaignDraft.placementTypes,
         targetLevelIds: campaignDraft.targetLevelId ? [campaignDraft.targetLevelId] : [],
         billboardSlotIds: parseCommaList(campaignDraft.slotIds),
         creativeUrl: campaignDraft.creativeUrl.trim(),
         destinationUrl: campaignDraft.destinationUrl.trim() || undefined,
         rotationSeconds: Number(campaignDraft.rotationSeconds || "30"),
-        priority: Number(campaignDraft.priority || "1")
+        priority: Number(campaignDraft.priority || "1"),
+        frequencyCapPerSession: Number(campaignDraft.frequencyCapPerSession || "3")
       };
 
       const campaign = editingCampaignId
@@ -196,14 +209,15 @@ export function App() {
     <div className="admin-shell">
       <aside className="admin-sidebar">
         <span className="eyebrow">Avara Web Admin</span>
-        <h1>Phase 3 content pipeline, moderation, and official-level management.</h1>
-        <p>Uploads are now real zip packages, validated server-side, extracted into the web catalog, and moderated from here.</p>
+        <h1>Phase 4 campaign reporting, rate limiting, and service visibility.</h1>
+        <p>The content pipeline remains intact, and the ad layer now exposes placement targeting, metrics, and ops health.</p>
 
         <div className="nav-group">
           <button>Dashboard</button>
           <button>Uploads</button>
           <button>Levels</button>
           <button>Ads</button>
+          <button>Ops</button>
           <button>Audit</button>
         </div>
       </aside>
@@ -215,6 +229,67 @@ export function App() {
           <MetricCard label="Official levels" value={dashboard?.importedOfficialLevels ?? 0} />
           <MetricCard label="Pending review" value={dashboard?.uploadsPendingReview ?? 0} />
           <MetricCard label="Live campaigns" value={dashboard?.adCampaignsLive ?? 0} />
+          <MetricCard label="Impressions" value={dashboard?.totalAdImpressions ?? 0} />
+          <MetricCard label="Clicks" value={dashboard?.totalAdClicks ?? 0} />
+        </section>
+
+        <section className="admin-card two-column">
+          <div>
+            <div className="section-header">
+              <div>
+                <span className="eyebrow">Ops</span>
+                <h2>Build and service health</h2>
+              </div>
+              <span className="muted">{dashboard?.buildVersion ?? "unknown build"}</span>
+            </div>
+            <div className="campaign-list">
+              {(ops?.serviceHealth ?? []).map((service) => (
+                <article key={service.service} className="campaign-card">
+                  <strong>{service.service}</strong>
+                  <span>
+                    {service.status} • {service.buildVersion}
+                  </span>
+                  <small>
+                    uptime {service.uptimeSeconds ?? 0}s • {Object.keys(service.detail).length} health fields
+                  </small>
+                </article>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="section-header">
+              <div>
+                <span className="eyebrow">Rate limits</span>
+                <h2>Abuse controls</h2>
+              </div>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Bucket</th>
+                  <th>Limit</th>
+                  <th>Hits</th>
+                  <th>Blocked</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(ops?.rateLimits ?? []).map((entry) => (
+                  <tr key={entry.bucket}>
+                    <td>{entry.bucket}</td>
+                    <td>
+                      {entry.limit} / {Math.round(entry.windowMs / 1000)}s
+                    </td>
+                    <td>{entry.hits}</td>
+                    <td>{entry.blocked}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="muted">
+              Backup root: <code>{ops?.backupRoot ?? "n/a"}</code> • tracked archives: {ops?.uploadArchiveCount ?? 0}
+            </p>
+          </div>
         </section>
 
         <section className="admin-card upload-card">
@@ -438,11 +513,11 @@ export function App() {
           <div>
             <div className="section-header">
               <div>
-                <span className="eyebrow">Billboards</span>
-                <h2>Campaign rotation server</h2>
+                <span className="eyebrow">Ads</span>
+                <h2>Campaign assignment</h2>
               </div>
               <button className="action-button" disabled={savingCampaign} onClick={handleNewCampaign}>
-                New billboard
+                New campaign
               </button>
             </div>
 
@@ -490,6 +565,34 @@ export function App() {
                     ))}
                   </select>
                 </label>
+              </div>
+
+              <div className="field">
+                <span>Placements</span>
+                <div className="toggle-grid">
+                  {[
+                    ["lobby_banner", "Lobby"],
+                    ["level_loading", "Loading"],
+                    ["results_banner", "Results"],
+                    ["level_billboard", "Billboard"]
+                  ].map(([placement, label]) => (
+                    <label key={placement} className="toggle-chip">
+                      <input
+                        type="checkbox"
+                        checked={campaignDraft.placementTypes.includes(placement as AdCampaign["placementTypes"][number])}
+                        onChange={(event) =>
+                          setCampaignDraft((current) => ({
+                            ...current,
+                            placementTypes: event.target.checked
+                              ? [...current.placementTypes, placement as AdCampaign["placementTypes"][number]]
+                              : current.placementTypes.filter((entry) => entry !== placement)
+                          }))
+                        }
+                      />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
               </div>
 
               <label className="field">
@@ -547,14 +650,27 @@ export function App() {
                     onChange={(event) => setCampaignDraft((current) => ({ ...current, priority: event.target.value }))}
                   />
                 </label>
+
+                <label className="field">
+                  <span>Session cap</span>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={campaignDraft.frequencyCapPerSession}
+                    onChange={(event) =>
+                      setCampaignDraft((current) => ({ ...current, frequencyCapPerSession: event.target.value }))
+                    }
+                  />
+                </label>
               </div>
 
               <div className="editor-actions">
                 <button className="action-button" type="submit" disabled={savingCampaign}>
-                  {savingCampaign ? "Saving…" : editingCampaignId ? "Update billboard campaign" : "Create billboard campaign"}
+                  {savingCampaign ? "Saving…" : editingCampaignId ? "Update campaign" : "Create campaign"}
                 </button>
                 <span className="muted">
-                  Campaigns only target approved placeholder slots, never arbitrary world geometry.
+                  Placements can span lobby, loading, results, and level-owned billboard slots with per-session caps.
                 </span>
               </div>
             </form>
@@ -568,14 +684,48 @@ export function App() {
                 >
                   <strong>{campaign.name}</strong>
                   <span>
-                    {campaign.status} • P{campaign.priority} • {campaign.rotationSeconds}s rotation
+                    {campaign.status} • P{campaign.priority} • {campaign.rotationSeconds}s rotation • cap {campaign.frequencyCapPerSession}
                   </span>
-                  <small>{campaign.targetLevelIds[0] ?? "all imported levels"}</small>
+                  <small>{campaign.placementTypes.join(", ")}</small>
                   <small>{campaign.billboardSlotIds.join(", ") || "all billboard slots"}</small>
                 </button>
               ))}
             </div>
           </div>
+        </section>
+
+        <section className="admin-card">
+          <div className="section-header">
+            <div>
+              <span className="eyebrow">Reporting</span>
+              <h2>Campaign performance</h2>
+            </div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Campaign</th>
+                <th>Impressions</th>
+                <th>Clicks</th>
+                <th>CTR</th>
+                <th>Last event</th>
+              </tr>
+            </thead>
+            <tbody>
+              {reports.map((report) => (
+                <tr key={report.campaignId}>
+                  <td>
+                    <strong>{report.campaignName}</strong>
+                    <div className="muted">{report.status}</div>
+                  </td>
+                  <td>{report.totalImpressions}</td>
+                  <td>{report.totalClicks}</td>
+                  <td>{(report.ctr * 100).toFixed(1)}%</td>
+                  <td>{report.lastEventAt ? formatTimestamp(report.lastEventAt) : "No events yet"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </section>
 
         <section className="admin-card two-column">
@@ -662,12 +812,14 @@ function createCampaignDraft(levelId = ""): CampaignDraft {
   return {
     name: "",
     status: "draft",
+    placementTypes: ["level_billboard"],
     targetLevelId: levelId,
     slotIds: "",
     creativeUrl: "",
     destinationUrl: "",
     rotationSeconds: "30",
-    priority: "1"
+    priority: "1",
+    frequencyCapPerSession: "3"
   };
 }
 
@@ -675,12 +827,14 @@ function toCampaignDraft(campaign: AdCampaign): CampaignDraft {
   return {
     name: campaign.name,
     status: campaign.status,
+    placementTypes: campaign.placementTypes,
     targetLevelId: campaign.targetLevelIds[0] ?? "",
     slotIds: campaign.billboardSlotIds.join(", "),
     creativeUrl: campaign.creativeUrl,
     destinationUrl: campaign.destinationUrl ?? "",
     rotationSeconds: String(campaign.rotationSeconds),
-    priority: String(campaign.priority)
+    priority: String(campaign.priority),
+    frequencyCapPerSession: String(campaign.frequencyCapPerSession)
   };
 }
 

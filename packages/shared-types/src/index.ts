@@ -24,6 +24,9 @@ export type AdPlacementType =
   | "results_banner"
   | "level_billboard";
 
+export type AdEventType = "impression" | "click";
+export type ServiceStatus = "healthy" | "degraded" | "offline";
+
 export interface Identity {
   id: string;
   displayName: string;
@@ -152,7 +155,10 @@ export interface DashboardStats {
   uploadQueueHealthy: boolean;
   uploadsPendingReview: number;
   adCampaignsLive: number;
-  serverHealth: "healthy" | "degraded" | "offline";
+  totalAdImpressions: number;
+  totalAdClicks: number;
+  buildVersion: string;
+  serverHealth: ServiceStatus;
   importedOfficialLevels: number;
 }
 
@@ -165,6 +171,7 @@ export interface AdCampaign {
   billboardSlotIds: string[];
   priority: number;
   rotationSeconds: number;
+  frequencyCapPerSession: number;
   startAt: string;
   endAt: string;
   creativeUrl: string;
@@ -244,4 +251,67 @@ export interface AuditEvent {
   targetId: string;
   createdAt: string;
   payload: Record<string, unknown>;
+}
+
+export interface AdPlacementReport {
+  placementType: AdPlacementType;
+  impressions: number;
+  clicks: number;
+}
+
+export interface AdLevelReport {
+  levelId: string;
+  impressions: number;
+  clicks: number;
+}
+
+export interface AdCampaignReport {
+  campaignId: string;
+  campaignName: string;
+  status: AdCampaign["status"];
+  totalImpressions: number;
+  totalClicks: number;
+  uniqueSessions: number;
+  ctr: number;
+  lastEventAt: string | null;
+  placementReports: AdPlacementReport[];
+  levelReports: AdLevelReport[];
+}
+
+export interface ServiceHealthSnapshot {
+  service: string;
+  status: ServiceStatus;
+  buildVersion: string;
+  uptimeSeconds: number | null;
+  detail: Record<string, unknown>;
+}
+
+export interface RateLimitSummary {
+  bucket: string;
+  limit: number;
+  windowMs: number;
+  hits: number;
+  blocked: number;
+  lastTriggeredAt: string | null;
+}
+
+export interface OpsSnapshot {
+  buildVersion: string;
+  startedAt: string;
+  serviceHealth: ServiceHealthSnapshot[];
+  rateLimits: RateLimitSummary[];
+  roomLifecycle: {
+    created: number;
+    ended: number;
+    inviteJoins: number;
+    reconnects: number;
+    active: number;
+  };
+  adTotals: {
+    impressions: number;
+    clicks: number;
+    trackedCampaigns: number;
+  };
+  backupRoot: string;
+  uploadArchiveCount: number;
 }
