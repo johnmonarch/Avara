@@ -41,10 +41,14 @@ export interface ControlPreset {
   description: string;
 }
 
+export type GraphicsQuality = "performance" | "balanced" | "quality";
+
 export interface PlayerSettings {
   controlPreset: ControlPreset["id"];
   sensitivity: number;
   invertY: boolean;
+  graphicsQuality: GraphicsQuality;
+  showPerformanceHud: boolean;
 }
 
 export interface RoomPlayer {

@@ -9,6 +9,14 @@ A port of the [1996 game by Juri Munkki](https://en.wikipedia.org/wiki/Avara), p
 
 Avara is a cult-classic three-dimensional networked action FPS with remote-controlled bipedal tanks. 
 
+## Web rebuild
+
+This workspace also contains the `avara_online` browser rebuild described in [`avara-web-prd.md`](./avara-web-prd.md), with `/apps/web-player`, `/apps/admin`, `/apps/api`, `/apps/matchmaker`, and `/apps/game-server`.
+
+- Browser player build: `pnpm build:web-player`
+- Admin build: `pnpm build:admin`
+- Creator package guide: [`apps/web-player/public/creator-level-packages.md`](./apps/web-player/public/creator-level-packages.md)
+
 The game was originally developed in the early 1990s for Apple Macintosh. This port uses SDL2 and OpenGL to replace legacy system APIs, and is intended to run *at 60fps* on Windows, macOS, and Linux.
 
 #### [💾 Download the alpha version!](https://github.com/avaraline/Avara/releases/tag/0.7.0-nightly.20201230)
@@ -36,5 +44,3 @@ _Please note that this tracker is **not** compatible with the Mac OS 9 version o
 - [Read more about the porting process](https://github.com/avaraline/Avara/wiki/Porting-challenges) and how specific [obstacles](https://en.wikipedia.org/wiki/Macintosh_Toolbox) were overcome
 - Join us on the [Avara Discord](https://discord.gg/yw5qnBtJd5)
 - Join us on IRC: `irc://avaraline.net:6667/avaraline`
-
-

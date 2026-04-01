@@ -7,6 +7,7 @@ import type {
   LevelBillboardAssignment,
   LevelScene,
   LevelSummary,
+  PlayerSettings,
   RoomDetail,
   RoomSummary,
   Visibility
@@ -29,26 +30,35 @@ export interface PrototypeInputState {
   crouchJump: boolean;
 }
 
-export async function ensureGuestIdentity(): Promise<Identity> {
+export async function ensurePlayerProfile(): Promise<{ identity: Identity; settings: PlayerSettings }> {
   const identityId = window.localStorage.getItem(identityStorageKey);
   if (identityId) {
-    const current = await apiRequest<{ identity: Identity }>("/me", {
+    const current = await apiRequest<{ identity: Identity; settings: PlayerSettings }>("/me", {
       headers: {
         "X-Avara-User": identityId
       }
     });
 
     window.localStorage.setItem(identityStorageKey, current.identity.id);
-    return current.identity;
+    return current;
   }
 
-  const created = await apiRequest<{ identity: Identity }>("/auth/guest", {
+  const created = await apiRequest<{ identity: Identity; settings: PlayerSettings }>("/auth/guest", {
     method: "POST",
     body: JSON.stringify({})
   });
 
   window.localStorage.setItem(identityStorageKey, created.identity.id);
-  return created.identity;
+  return created;
+}
+
+export async function updatePlayerSettings(settings: Partial<PlayerSettings>): Promise<PlayerSettings> {
+  const payload = await apiRequest<{ settings: PlayerSettings }>("/me/settings", {
+    method: "PATCH",
+    body: JSON.stringify(settings),
+    headers: identityHeaders()
+  });
+  return payload.settings;
 }
 
 export async function fetchLevels(): Promise<LevelSummary[]> {

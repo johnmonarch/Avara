@@ -4,41 +4,52 @@ import type { SnapshotPacket } from "@avara/shared-protocol";
 import type {
   AdCampaign,
   AdPlacementType,
+  GraphicsQuality,
   Identity,
   LevelBillboardAssignment,
   LevelScene,
   LevelSummary,
+  PlayerSettings,
   RoomSummary,
   Visibility
 } from "@avara/shared-types";
-import { CONTROL_PRESETS } from "@avara/shared-ui";
+import { CONTROL_PRESET_BINDINGS, CONTROL_PRESETS, GRAPHICS_QUALITY_OPTIONS } from "@avara/shared-ui";
 
 import {
   bootstrapPrototypeRoom,
   createRoom,
   endRoom,
-  ensureGuestIdentity,
   ensureAdSessionId,
-  fetchLevels,
+  ensurePlayerProfile,
   fetchLevelAds,
   fetchLevelBillboards,
   fetchLevelScene,
+  fetchLevels,
   fetchPrototypeSnapshot,
   fetchRoom,
   fetchRoomByInvite,
   fetchRooms,
   heartbeatRoom,
+  joinPrototypeRoom,
   joinRoom,
   joinRoomByInvite,
-  joinPrototypeRoom,
-  leaveRoom,
   leavePrototypeRoom,
+  leaveRoom,
   sendPrototypeInput,
-  trackAdEvent
+  trackAdEvent,
+  updatePlayerSettings
 } from "./lib/api";
 
 const LevelViewport = lazy(() => import("./components/LevelViewport"));
 const reconnectStorageKey = "avara-room-reconnect";
+const onboardingStorageKey = "avara-beta-onboarding-dismissed";
+const defaultPlayerSettings: PlayerSettings = {
+  controlPreset: "modernized",
+  sensitivity: 0.75,
+  invertY: false,
+  graphicsQuality: "balanced",
+  showPerformanceHud: false
+};
 
 interface StoredReconnectState {
   roomId: string;
@@ -52,8 +63,36 @@ interface LevelAdsState {
   results: AdCampaign[];
 }
 
+interface CompatibilityNotice {
+  title: string;
+  detail: string;
+}
+
+interface ViewportTelemetry {
+  fps: number | null;
+  pixelRatio: number;
+  quality: GraphicsQuality;
+  compatibilityError: string | null;
+}
+
+interface BindingMap {
+  moveForwardPositive: string[];
+  moveForwardNegative: string[];
+  turnLeft: string[];
+  turnRight: string[];
+  primaryFireKeys: string[];
+  boostKeys: string[];
+  crouchJumpKeys: string[];
+  missileKeys: string[];
+  grenadeKeys: string[];
+}
+
 export function App() {
   const [identity, setIdentity] = useState<Identity | null>(null);
+  const [playerSettings, setPlayerSettings] = useState<PlayerSettings>(defaultPlayerSettings);
+  const [settingsDraft, setSettingsDraft] = useState<PlayerSettings>(defaultPlayerSettings);
+  const [settingsBusy, setSettingsBusy] = useState(false);
+  const [settingsNotice, setSettingsNotice] = useState("");
   const [levels, setLevels] = useState<LevelSummary[]>([]);
   const [levelAds, setLevelAds] = useState<LevelAdsState>({ lobby: [], loading: [], results: [] });
   const [rooms, setRooms] = useState<RoomSummary[]>([]);
@@ -71,12 +110,32 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [copyStatus, setCopyStatus] = useState("");
   const [error, setError] = useState("");
+  const [documentHidden, setDocumentHidden] = useState<boolean>(typeof document !== "undefined" ? document.hidden : false);
+  const [pointerLocked, setPointerLocked] = useState(false);
+  const [onboardingDismissed, setOnboardingDismissed] = useState(readOnboardingDismissed);
+  const [viewportTelemetry, setViewportTelemetry] = useState<ViewportTelemetry>(() => ({
+    fps: null,
+    pixelRatio: typeof window === "undefined" ? 1 : Math.min(window.devicePixelRatio || 1, 1.5),
+    quality: defaultPlayerSettings.graphicsQuality,
+    compatibilityError: null
+  }));
 
   const keyStateRef = useRef<Record<string, boolean>>({});
   const lookStateRef = useRef({ aimYaw: 0, aimPitch: 0 });
   const queuedActionRef = useRef({ loadMissile: false, loadGrenade: false });
   const fireActiveRef = useRef(false);
   const reportedAdsRef = useRef(new Set<string>());
+  const visibilityRef = useRef(documentHidden);
+  const settingsNoticeTimerRef = useRef<number | null>(null);
+  const playerSettingsRef = useRef(playerSettings);
+
+  useEffect(() => {
+    visibilityRef.current = documentHidden;
+  }, [documentHidden]);
+
+  useEffect(() => {
+    playerSettingsRef.current = playerSettings;
+  }, [playerSettings]);
 
   const selectedRoom = useMemo(
     () => (selectedRoomId ? rooms.find((room) => room.id === selectedRoomId) ?? null : null),
@@ -98,6 +157,55 @@ export function App() {
   const activeLoadingCampaign = levelAds.loading[0] ?? null;
   const activeResultsCampaign = levelAds.results[0] ?? null;
   const shareInviteUrl = selectedRoom ? buildInviteUrl(selectedRoom.invitePath, selectedRoom.inviteCode) : "";
+  const settingsDirty = useMemo(() => !playerSettingsEqual(playerSettings, settingsDraft), [playerSettings, settingsDraft]);
+  const selectedBindings = useMemo(() => CONTROL_PRESET_BINDINGS[settingsDraft.controlPreset], [settingsDraft.controlPreset]);
+  const compatibilityNotes = useMemo(
+    () => buildCompatibilityNotes(settingsDraft, viewportTelemetry),
+    [settingsDraft, viewportTelemetry]
+  );
+  const onboardingChecklist = useMemo(
+    () => [
+      {
+        id: "preset",
+        label: `${settingsDraft.controlPreset === "classic" ? "Classic" : "Modernized"} preset selected`,
+        done: true
+      },
+      {
+        id: "quality",
+        label: `${formatGraphicsQuality(settingsDraft.graphicsQuality)} renderer profile ready`,
+        done: true
+      },
+      {
+        id: "room",
+        label: connectedRoom ? `Connected to ${connectedRoom.name}` : "Join or create a room",
+        done: Boolean(connectedRoom)
+      },
+      {
+        id: "pointer-lock",
+        label: pointerLocked ? "Pointer lock engaged" : "Click the arena to lock the pointer",
+        done: pointerLocked
+      }
+    ],
+    [connectedRoom, pointerLocked, settingsDraft.controlPreset, settingsDraft.graphicsQuality]
+  );
+
+  useEffect(() => {
+    if (pointerLocked && connectedRoom && !onboardingDismissed) {
+      persistOnboardingDismissed(true);
+      setOnboardingDismissed(true);
+    }
+  }, [connectedRoom, onboardingDismissed, pointerLocked]);
+
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      setDocumentHidden(document.hidden);
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, []);
 
   useEffect(() => {
     void bootstrap();
@@ -106,7 +214,7 @@ export function App() {
       try {
         setBusy(true);
         ensureAdSessionId();
-        const nextIdentity = await ensureGuestIdentity();
+        const { identity: nextIdentity, settings } = await ensurePlayerProfile();
         const nextLevels = await fetchLevels();
         let nextRooms = await fetchRooms();
         let selectedId = nextRooms[0]?.id ?? "";
@@ -145,6 +253,8 @@ export function App() {
         }
 
         setIdentity(nextIdentity);
+        setPlayerSettings(settings);
+        setSettingsDraft(settings);
         setLevels(nextLevels);
         setRooms(nextRooms);
         setSelectedRoomId(selectedId);
@@ -164,6 +274,8 @@ export function App() {
     }
 
     let cancelled = false;
+    let timerId = 0;
+
     const refresh = async () => {
       try {
         const nextRooms = await fetchRooms();
@@ -172,17 +284,17 @@ export function App() {
         }
       } catch {
         return;
+      } finally {
+        if (!cancelled) {
+          timerId = window.setTimeout(refresh, visibilityRef.current ? 15_000 : 5_000);
+        }
       }
     };
 
     void refresh();
-    const intervalId = window.setInterval(() => {
-      void refresh();
-    }, 5000);
-
     return () => {
       cancelled = true;
-      window.clearInterval(intervalId);
+      window.clearTimeout(timerId);
     };
   }, [identity?.id]);
 
@@ -244,23 +356,29 @@ export function App() {
     }
 
     let cancelled = false;
-    const intervalId = window.setInterval(() => {
-      void fetchLevelBillboards(activeLevelId)
-        .then((nextBillboards) => {
-          if (!cancelled) {
-            setBillboards(nextBillboards);
-          }
-        })
-        .catch((nextError) => {
-          if (!cancelled) {
-            setError(nextError instanceof Error ? nextError.message : "Billboard refresh failed");
-          }
-        });
-    }, 5000);
+    let timerId = 0;
 
+    const refresh = async () => {
+      try {
+        const nextBillboards = await fetchLevelBillboards(activeLevelId);
+        if (!cancelled) {
+          setBillboards(nextBillboards);
+        }
+      } catch (nextError) {
+        if (!cancelled) {
+          setError(nextError instanceof Error ? nextError.message : "Billboard refresh failed");
+        }
+      } finally {
+        if (!cancelled) {
+          timerId = window.setTimeout(refresh, visibilityRef.current ? 15_000 : 5_000);
+        }
+      }
+    };
+
+    void refresh();
     return () => {
       cancelled = true;
-      window.clearInterval(intervalId);
+      window.clearTimeout(timerId);
     };
   }, [activeLevelId, scene]);
 
@@ -292,7 +410,16 @@ export function App() {
   }, [snapshot?.roomStatus, activeResultsCampaign?.id, activeLevelId]);
 
   useEffect(() => {
-    const trackedKeys = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "ShiftLeft", "ShiftRight", "Space"]);
+    const bindings = getBindingMap(playerSettings.controlPreset);
+    const trackedKeys = new Set([
+      ...bindings.moveForwardPositive,
+      ...bindings.moveForwardNegative,
+      ...bindings.turnLeft,
+      ...bindings.turnRight,
+      ...bindings.primaryFireKeys,
+      ...bindings.boostKeys,
+      ...bindings.crouchJumpKeys
+    ]);
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (trackedKeys.has(event.code)) {
@@ -305,12 +432,12 @@ export function App() {
         return;
       }
 
-      if (event.code === "KeyQ") {
+      if (bindings.missileKeys.includes(event.code)) {
         queuedActionRef.current.loadMissile = true;
         event.preventDefault();
       }
 
-      if (event.code === "KeyE") {
+      if (bindings.grenadeKeys.includes(event.code)) {
         queuedActionRef.current.loadGrenade = true;
         event.preventDefault();
       }
@@ -354,7 +481,7 @@ export function App() {
       window.removeEventListener("mouseup", onMouseUp);
       window.removeEventListener("blur", onBlur);
     };
-  }, []);
+  }, [playerSettings.controlPreset]);
 
   useEffect(() => {
     if (!identity || !connectedRoom || !scene || scene.id !== connectedRoom.levelId) {
@@ -362,14 +489,76 @@ export function App() {
     }
 
     let cancelled = false;
-    let inputInterval = 0;
-    let snapshotInterval = 0;
-    let heartbeatInterval = 0;
+    let inputTimer = 0;
+    let snapshotTimer = 0;
+    let heartbeatTimer = 0;
     let suspendDisconnect = false;
 
     const markReconnect = () => {
       suspendDisconnect = true;
       writeReconnectState(connectedRoom);
+    };
+
+    const runInputLoop = async (room: RoomSummary, playerId: string) => {
+      try {
+        if (!visibilityRef.current) {
+          const nextSnapshot = await sendPrototypeInput(
+            room,
+            playerId,
+            buildCombatInput(
+              keyStateRef.current,
+              lookStateRef.current,
+              queuedActionRef.current,
+              fireActiveRef.current,
+              playerSettingsRef.current
+            )
+          );
+          if (!cancelled) {
+            setSnapshot(nextSnapshot);
+          }
+        }
+      } catch (nextError) {
+        if (!cancelled) {
+          setError(nextError instanceof Error ? nextError.message : "Input loop failed");
+        }
+      } finally {
+        if (!cancelled) {
+          inputTimer = window.setTimeout(() => void runInputLoop(room, playerId), visibilityRef.current ? 250 : 50);
+        }
+      }
+    };
+
+    const runSnapshotLoop = async (room: RoomSummary) => {
+      try {
+        const nextSnapshot = await fetchPrototypeSnapshot(room);
+        if (!cancelled) {
+          setSnapshot(nextSnapshot);
+        }
+      } catch (nextError) {
+        if (!cancelled) {
+          setError(nextError instanceof Error ? nextError.message : "Snapshot poll failed");
+        }
+      } finally {
+        if (!cancelled) {
+          snapshotTimer = window.setTimeout(() => void runSnapshotLoop(room), visibilityRef.current ? 900 : 120);
+        }
+      }
+    };
+
+    const runHeartbeatLoop = async (roomId: string) => {
+      try {
+        const freshRoom = await heartbeatRoom(roomId);
+        if (!cancelled) {
+          setRooms((current) => upsertRoom(current, freshRoom));
+          writeReconnectState(freshRoom);
+        }
+      } catch {
+        return;
+      } finally {
+        if (!cancelled) {
+          heartbeatTimer = window.setTimeout(() => void runHeartbeatLoop(roomId), visibilityRef.current ? 12_000 : 5_000);
+        }
+      }
     };
 
     const startSession = async () => {
@@ -396,52 +585,9 @@ export function App() {
         setSnapshot(joined.snapshot);
         setPrototypeStatus("live");
 
-        heartbeatInterval = window.setInterval(async () => {
-          try {
-            const freshRoom = await heartbeatRoom(joinedRoom.id);
-            if (!cancelled) {
-              setRooms((current) => upsertRoom(current, freshRoom));
-              writeReconnectState(freshRoom);
-            }
-          } catch {
-            return;
-          }
-        }, 5000);
-
-        inputInterval = window.setInterval(async () => {
-          try {
-            const nextSnapshot = await sendPrototypeInput(
-              joinedRoom,
-              joined.playerId,
-              buildCombatInput(
-                keyStateRef.current,
-                lookStateRef.current,
-                queuedActionRef.current,
-                fireActiveRef.current
-              )
-            );
-            if (!cancelled) {
-              setSnapshot(nextSnapshot);
-            }
-          } catch (nextError) {
-            if (!cancelled) {
-              setError(nextError instanceof Error ? nextError.message : "Input loop failed");
-            }
-          }
-        }, 50);
-
-        snapshotInterval = window.setInterval(async () => {
-          try {
-            const nextSnapshot = await fetchPrototypeSnapshot(joinedRoom);
-            if (!cancelled) {
-              setSnapshot(nextSnapshot);
-            }
-          } catch (nextError) {
-            if (!cancelled) {
-              setError(nextError instanceof Error ? nextError.message : "Snapshot poll failed");
-            }
-          }
-        }, 120);
+        void runHeartbeatLoop(joinedRoom.id);
+        void runInputLoop(joinedRoom, joined.playerId);
+        void runSnapshotLoop(joinedRoom);
       } catch (nextError) {
         if (!cancelled) {
           setPrototypeStatus("idle");
@@ -458,9 +604,9 @@ export function App() {
       cancelled = true;
       window.removeEventListener("pagehide", markReconnect);
       window.removeEventListener("beforeunload", markReconnect);
-      window.clearInterval(inputInterval);
-      window.clearInterval(snapshotInterval);
-      window.clearInterval(heartbeatInterval);
+      window.clearTimeout(inputTimer);
+      window.clearTimeout(snapshotTimer);
+      window.clearTimeout(heartbeatTimer);
       setSnapshot(null);
       setLocalPlayerId("");
       setPrototypeStatus("idle");
@@ -481,6 +627,14 @@ export function App() {
         .catch(() => undefined);
     };
   }, [connectedRoom?.id, identity?.id, scene?.id]);
+
+  useEffect(() => {
+    return () => {
+      if (settingsNoticeTimerRef.current) {
+        window.clearTimeout(settingsNoticeTimerRef.current);
+      }
+    };
+  }, []);
 
   async function handleCreateRoom() {
     if (!featuredLevel) {
@@ -595,6 +749,25 @@ export function App() {
     }
   }
 
+  async function handleSaveSettings() {
+    try {
+      setSettingsBusy(true);
+      setSettingsNotice("");
+      const nextSettings = await updatePlayerSettings(settingsDraft);
+      setPlayerSettings(nextSettings);
+      setSettingsDraft(nextSettings);
+      setSettingsNotice("Controls and renderer profile saved.");
+      if (settingsNoticeTimerRef.current) {
+        window.clearTimeout(settingsNoticeTimerRef.current);
+      }
+      settingsNoticeTimerRef.current = window.setTimeout(() => setSettingsNotice(""), 2200);
+    } catch (nextError) {
+      setSettingsNotice(nextError instanceof Error ? nextError.message : "Failed to save settings");
+    } finally {
+      setSettingsBusy(false);
+    }
+  }
+
   function reportAdImpression(campaignId: string, placementType: AdPlacementType, slotId?: string) {
     const levelId = activeLevelId || featuredLevel?.id;
     const key = [campaignId, placementType, levelId ?? "", slotId ?? ""].join(":");
@@ -631,9 +804,10 @@ export function App() {
       <aside className="panel panel-left">
         <div className="brand-block">
           <span className="eyebrow">Avara Web</span>
-          <h1>Centralized rooms, playable classic levels, and measured ad placements layered into the web stack.</h1>
+          <h1>Phase 5 turns the playable prototype into a beta surface with saved controls, renderer tuning, compatibility guidance, and creator-facing docs.</h1>
           <p>
-            Phase 4 adds lobby, loading, results, and in-level billboard surfaces with session-safe campaign measurement.
+            Official and community levels still flow through the centralized stack, but the browser experience now has a
+            real first-play ramp instead of assuming desktop-shooter muscle memory.
           </p>
         </div>
 
@@ -642,7 +816,165 @@ export function App() {
             <h2>Identity</h2>
             <span>{identity?.displayName ?? "Loading guest…"}</span>
           </div>
-          <p>Guest-first onboarding remains intact. Rooms route through the room service, while ad events stay session-scoped.</p>
+          <p>
+            Guest-first onboarding remains intact. Your sensitivity, invert-Y, preset choice, and graphics profile now
+            persist per guest identity through the API.
+          </p>
+          <div className="pilot-summary">
+            <span>{identity?.guest ? "Guest identity" : "Registered identity"}</span>
+            <span>{formatGraphicsQuality(playerSettings.graphicsQuality)} renderer</span>
+            <span>{viewportTelemetry.fps ? `${viewportTelemetry.fps} FPS` : "Sampling FPS"}</span>
+          </div>
+        </div>
+
+        {!onboardingDismissed ? (
+          <div className="card">
+            <div className="card-header">
+              <h2>Launch Guide</h2>
+              <span>First play</span>
+            </div>
+            <p>
+              Modernized reduces learning friction with alias keys and clearer HUD prompts. Classic stays close to the
+              original documented layout.
+            </p>
+            <div className="checklist">
+              {onboardingChecklist.map((step) => (
+                <div key={step.id} className={step.done ? "checklist-item checklist-item-done" : "checklist-item"}>
+                  <span>{step.done ? "Ready" : "Next"}</span>
+                  <strong>{step.label}</strong>
+                </div>
+              ))}
+            </div>
+            <div className="card-actions">
+              <button
+                className="secondary-button"
+                onClick={() => {
+                  persistOnboardingDismissed(true);
+                  setOnboardingDismissed(true);
+                }}
+              >
+                Dismiss guide
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="card">
+          <div className="card-header">
+            <h2>Player Setup</h2>
+            <span>Saved per guest</span>
+          </div>
+          <label className="field">
+            <span>Control preset</span>
+            <select
+              value={settingsDraft.controlPreset}
+              onChange={(event) =>
+                setSettingsDraft((current) => ({
+                  ...current,
+                  controlPreset: event.target.value as PlayerSettings["controlPreset"]
+                }))
+              }
+            >
+              {CONTROL_PRESETS.map((preset) => (
+                <option key={preset.id} value={preset.id}>
+                  {preset.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="muted preset-copy">
+            {CONTROL_PRESETS.find((preset) => preset.id === settingsDraft.controlPreset)?.description}
+          </p>
+
+          <label className="field">
+            <span>Sensitivity</span>
+            <input
+              type="range"
+              min="0.2"
+              max="2"
+              step="0.05"
+              value={settingsDraft.sensitivity}
+              onChange={(event) =>
+                setSettingsDraft((current) => ({
+                  ...current,
+                  sensitivity: Number(event.target.value)
+                }))
+              }
+            />
+          </label>
+          <div className="field-inline">
+            <span className="muted">Current multiplier</span>
+            <strong>{settingsDraft.sensitivity.toFixed(2)}x</strong>
+          </div>
+
+          <label className="toggle-field">
+            <input
+              type="checkbox"
+              checked={settingsDraft.invertY}
+              onChange={(event) =>
+                setSettingsDraft((current) => ({
+                  ...current,
+                  invertY: event.target.checked
+                }))
+              }
+            />
+            <span>Invert Y axis</span>
+          </label>
+
+          <label className="field">
+            <span>Graphics quality</span>
+            <select
+              value={settingsDraft.graphicsQuality}
+              onChange={(event) =>
+                setSettingsDraft((current) => ({
+                  ...current,
+                  graphicsQuality: event.target.value as GraphicsQuality
+                }))
+              }
+            >
+              {GRAPHICS_QUALITY_OPTIONS.map((quality) => (
+                <option key={quality.id} value={quality.id}>
+                  {quality.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="muted preset-copy">
+            {GRAPHICS_QUALITY_OPTIONS.find((quality) => quality.id === settingsDraft.graphicsQuality)?.description}
+          </p>
+
+          <label className="toggle-field">
+            <input
+              type="checkbox"
+              checked={settingsDraft.showPerformanceHud}
+              onChange={(event) =>
+                setSettingsDraft((current) => ({
+                  ...current,
+                  showPerformanceHud: event.target.checked
+                }))
+              }
+            />
+            <span>Show FPS and render diagnostics in match</span>
+          </label>
+
+          <div className="binding-list">
+            {selectedBindings.map((binding) => (
+              <div key={binding.action} className="binding-row">
+                <span>{binding.action}</span>
+                <strong>{binding.keys}</strong>
+              </div>
+            ))}
+          </div>
+
+          <div className="card-actions">
+            <button className="primary-button" disabled={!settingsDirty || settingsBusy} onClick={handleSaveSettings}>
+              {settingsBusy ? "Saving…" : "Save setup"}
+            </button>
+            <button className="secondary-button" disabled={!settingsDirty || settingsBusy} onClick={() => setSettingsDraft(playerSettings)}>
+              Reset
+            </button>
+          </div>
+          {settingsNotice ? <p className="muted">{settingsNotice}</p> : null}
         </div>
 
         <div className="card">
@@ -707,27 +1039,12 @@ export function App() {
             Join from invite
           </button>
         </div>
-
-        <div className="card">
-          <div className="card-header">
-            <h2>Controls</h2>
-            <span>Playable now</span>
-          </div>
-          <div className="preset-list">
-            {CONTROL_PRESETS.map((preset) => (
-              <div key={preset.id} className="preset">
-                <strong>{preset.label}</strong>
-                <p>{preset.description}</p>
-              </div>
-            ))}
-          </div>
-        </div>
       </aside>
 
       <main className="main-stage">
         <div className="hero-bar">
           <div>
-            <span className="eyebrow">Official Level</span>
+            <span className="eyebrow">Beta Surface</span>
             <h2>{featuredLevel?.title ?? "Select a room"}</h2>
           </div>
           <div className="hero-status">
@@ -735,6 +1052,8 @@ export function App() {
             <span>{levels.length} imported levels</span>
             <span>Room: {connectedRoom?.name ?? selectedRoom?.name ?? "none"}</span>
             <span>Match: {snapshot?.roomStatus ?? prototypeStatus}</span>
+            <span>{formatGraphicsQuality(playerSettings.graphicsQuality)}</span>
+            <span>{viewportTelemetry.fps ? `${viewportTelemetry.fps} FPS` : "Sampling"}</span>
           </div>
         </div>
 
@@ -759,10 +1078,13 @@ export function App() {
             billboards={billboards}
             snapshot={snapshot}
             localPlayerId={localPlayerId}
+            playerSettings={playerSettings}
             prototypeStatus={prototypeStatus}
             onAimChange={(aim) => {
               lookStateRef.current = aim;
             }}
+            onPointerLockChange={setPointerLocked}
+            onTelemetryChange={setViewportTelemetry}
           />
         </Suspense>
       </main>
@@ -834,6 +1156,32 @@ export function App() {
 
         <div className="card">
           <div className="card-header">
+            <h2>Compatibility</h2>
+            <span>{compatibilityNotes.length ? "Attention" : "Healthy"}</span>
+          </div>
+          {compatibilityNotes.length ? (
+            <div className="notice-list">
+              {compatibilityNotes.map((note) => (
+                <div key={note.title} className="notice-card">
+                  <strong>{note.title}</strong>
+                  <p>{note.detail}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="muted">
+              WebGL renderer is healthy. Hidden tabs now back off polling, and the viewport is running at roughly{" "}
+              {viewportTelemetry.fps ? `${viewportTelemetry.fps} FPS` : "live-sampled FPS"} with a {formatGraphicsQuality(viewportTelemetry.quality).toLowerCase()} profile.
+            </p>
+          )}
+          <div className="pilot-summary">
+            <span>Pixel ratio {viewportTelemetry.pixelRatio.toFixed(2)}</span>
+            <span>{documentHidden ? "Background throttling active" : "Foreground render path"}</span>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-header">
             <h2>Billboard server</h2>
             <span>{billboards.length} slots</span>
           </div>
@@ -852,22 +1200,17 @@ export function App() {
 
         <div className="card">
           <div className="card-header">
-            <h2>Phase 4 flow</h2>
-            <span>Measurement + safety</span>
+            <h2>Creator docs</h2>
+            <span>Validator-aligned</span>
           </div>
           <p>
-            Campaigns can target lobby, loading, results, and level-owned billboard slots. Impression counts are throttled
-            per session so the admin sees usable reporting instead of refresh spam.
+            Package structure, moderation flow, banned-content rules, and in-level billboard slot markup are documented in{" "}
+            <a className="inline-link" href="/creator-level-packages.md" target="_blank" rel="noreferrer">
+              creator-level-packages.md
+            </a>
+            .
           </p>
-          {localPlayer ? (
-            <div className="pilot-summary">
-              <strong>{localPlayer.displayName}</strong>
-              <span>{localPlayer.kills} frags / {localPlayer.deaths} deaths</span>
-              <span>{localPlayer.health} hull</span>
-            </div>
-          ) : (
-            <p className="muted">Join a room to receive a live authoritative pilot state.</p>
-          )}
+          <p className="muted">Private-test uploads remain allowed before moderation, but script execution and archive escapes stay blocked.</p>
         </div>
 
         <div className="card">
@@ -922,23 +1265,121 @@ function buildCombatInput(
   keys: Record<string, boolean>,
   look: { aimYaw: number; aimPitch: number },
   queuedActions: { loadMissile: boolean; loadGrenade: boolean },
-  primaryFire: boolean
+  primaryFire: boolean,
+  settings: PlayerSettings
 ) {
+  const bindings = getBindingMap(settings.controlPreset);
   const payload = {
-    moveForward: (keys.KeyW ? 1 : 0) + (keys.KeyS ? -1 : 0),
-    turnBody: (keys.KeyD ? 1 : 0) + (keys.KeyA ? -1 : 0),
+    moveForward:
+      (isBindingActive(keys, bindings.moveForwardPositive) ? 1 : 0) +
+      (isBindingActive(keys, bindings.moveForwardNegative) ? -1 : 0),
+    turnBody:
+      (isBindingActive(keys, bindings.turnRight) ? 1 : 0) +
+      (isBindingActive(keys, bindings.turnLeft) ? -1 : 0),
     aimYaw: look.aimYaw,
     aimPitch: look.aimPitch,
-    primaryFire: primaryFire || Boolean(keys.Space),
+    primaryFire: primaryFire || isBindingActive(keys, bindings.primaryFireKeys),
     loadMissile: queuedActions.loadMissile,
     loadGrenade: queuedActions.loadGrenade,
-    boost: Boolean(keys.ShiftLeft || keys.ShiftRight),
-    crouchJump: false
+    boost: isBindingActive(keys, bindings.boostKeys),
+    crouchJump: isBindingActive(keys, bindings.crouchJumpKeys)
   };
 
   queuedActions.loadMissile = false;
   queuedActions.loadGrenade = false;
   return payload;
+}
+
+function getBindingMap(controlPreset: PlayerSettings["controlPreset"]): BindingMap {
+  if (controlPreset === "classic") {
+    return {
+      moveForwardPositive: ["KeyW"],
+      moveForwardNegative: ["KeyS"],
+      turnLeft: ["KeyA"],
+      turnRight: ["KeyD"],
+      primaryFireKeys: [],
+      boostKeys: ["ShiftLeft", "ShiftRight"],
+      crouchJumpKeys: ["Space"],
+      missileKeys: ["KeyQ"],
+      grenadeKeys: ["KeyE"]
+    };
+  }
+
+  return {
+    moveForwardPositive: ["KeyW", "ArrowUp"],
+    moveForwardNegative: ["KeyS", "ArrowDown"],
+    turnLeft: ["KeyA", "ArrowLeft"],
+    turnRight: ["KeyD", "ArrowRight"],
+    primaryFireKeys: ["Space"],
+    boostKeys: ["ShiftLeft", "ShiftRight"],
+    crouchJumpKeys: [],
+    missileKeys: ["KeyQ", "KeyF"],
+    grenadeKeys: ["KeyE", "KeyG"]
+  };
+}
+
+function isBindingActive(keys: Record<string, boolean>, codes: string[]): boolean {
+  return codes.some((code) => Boolean(keys[code]));
+}
+
+function playerSettingsEqual(left: PlayerSettings, right: PlayerSettings): boolean {
+  return (
+    left.controlPreset === right.controlPreset &&
+    left.sensitivity === right.sensitivity &&
+    left.invertY === right.invertY &&
+    left.graphicsQuality === right.graphicsQuality &&
+    left.showPerformanceHud === right.showPerformanceHud
+  );
+}
+
+function buildCompatibilityNotes(settings: PlayerSettings, telemetry: ViewportTelemetry): CompatibilityNotice[] {
+  const notes: CompatibilityNotice[] = [];
+
+  if (telemetry.compatibilityError) {
+    notes.push({
+      title: "WebGL compatibility issue",
+      detail: `${telemetry.compatibilityError} Lobby browsing still works, but active combat needs a browser with WebGL enabled.`
+    });
+  }
+
+  if (typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches) {
+    notes.push({
+      title: "Touch devices are browse-first",
+      detail: "The lobby and invite flow stay usable on mobile, but active combat is still tuned for keyboard, mouse, and pointer lock."
+    });
+  }
+
+  if (typeof navigator !== "undefined" && navigator.hardwareConcurrency > 0 && navigator.hardwareConcurrency <= 4 && settings.graphicsQuality === "quality") {
+    notes.push({
+      title: "Quality preset may overrun thin hardware",
+      detail: "This browser reports a smaller CPU budget. Balanced or Performance will usually hold steadier 60 FPS targets."
+    });
+  }
+
+  if (typeof window !== "undefined" && window.devicePixelRatio > 1.8 && settings.graphicsQuality === "quality") {
+    notes.push({
+      title: "High-density display detected",
+      detail: "Quality mode drives a sharper backbuffer on Retina-class panels. Use Balanced if frame pacing starts to dip."
+    });
+  }
+
+  if (
+    typeof window !== "undefined" &&
+    !window.isSecureContext &&
+    window.location.hostname !== "localhost" &&
+    window.location.hostname !== "127.0.0.1"
+  ) {
+    notes.push({
+      title: "Secure context recommended",
+      detail: "Pointer lock and future realtime transport behave best when the deployment runs over HTTPS."
+    });
+  }
+
+  return notes;
+}
+
+function formatGraphicsQuality(value: GraphicsQuality): string {
+  return GRAPHICS_QUALITY_OPTIONS.find((entry) => entry.id === value)?.label ?? value;
 }
 
 function upsertRoom(current: RoomSummary[], nextRoom: RoomSummary): RoomSummary[] {
@@ -1002,4 +1443,32 @@ function writeReconnectState(room: Pick<RoomSummary, "id" | "inviteCode">): void
 
 function clearReconnectState(): void {
   window.localStorage.removeItem(reconnectStorageKey);
+}
+
+function readOnboardingDismissed(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  try {
+    return window.localStorage.getItem(onboardingStorageKey) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function persistOnboardingDismissed(value: boolean): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    if (value) {
+      window.localStorage.setItem(onboardingStorageKey, "1");
+    } else {
+      window.localStorage.removeItem(onboardingStorageKey);
+    }
+  } catch {
+    return;
+  }
 }

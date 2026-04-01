@@ -138,29 +138,28 @@ const server = createServer(async (request, response) => {
       const body = await readJsonBody(request);
       const identity = createGuestIdentity(body?.displayName);
       identities.set(identity.id, identity);
-      settingsByUserId.set(identity.id, DEFAULT_PLAYER_SETTINGS);
+      const settings = normalizePlayerSettings(DEFAULT_PLAYER_SETTINGS);
+      settingsByUserId.set(identity.id, settings);
       return sendJson(response, 201, {
         identity,
-        settings: DEFAULT_PLAYER_SETTINGS
+        settings
       });
     }
 
     if (request.method === "GET" && pathname === "/me") {
       const identity = ensureIdentity(request);
+      const settings = normalizePlayerSettings(settingsByUserId.get(identity.id) ?? DEFAULT_PLAYER_SETTINGS);
+      settingsByUserId.set(identity.id, settings);
       return sendJson(response, 200, {
         identity,
-        settings: settingsByUserId.get(identity.id) ?? DEFAULT_PLAYER_SETTINGS
+        settings
       });
     }
 
     if (request.method === "PATCH" && pathname === "/me/settings") {
       const identity = ensureIdentity(request);
       const body = await readJsonBody(request);
-      const nextSettings = {
-        ...DEFAULT_PLAYER_SETTINGS,
-        ...(settingsByUserId.get(identity.id) ?? {}),
-        ...(body ?? {})
-      };
+      const nextSettings = normalizePlayerSettings(body, settingsByUserId.get(identity.id) ?? DEFAULT_PLAYER_SETTINGS);
       settingsByUserId.set(identity.id, nextSettings);
       return sendJson(response, 200, { settings: nextSettings });
     }
@@ -776,7 +775,7 @@ function ensureIdentity(request: IncomingMessage): Identity {
 
   const identity = createGuestIdentity();
   identities.set(identity.id, identity);
-  settingsByUserId.set(identity.id, DEFAULT_PLAYER_SETTINGS);
+  settingsByUserId.set(identity.id, normalizePlayerSettings(DEFAULT_PLAYER_SETTINGS));
   return identity;
 }
 
@@ -861,7 +860,7 @@ async function seedRooms(levels: LevelSummary[], roomMap: Map<string, RoomDetail
   for (const [index, level] of featuredLevels.entries()) {
     const owner = createGuestIdentity(index === 0 ? "Marshal" : "Sentinel");
     identities.set(owner.id, owner);
-    settingsByUserId.set(owner.id, DEFAULT_PLAYER_SETTINGS);
+    settingsByUserId.set(owner.id, normalizePlayerSettings(DEFAULT_PLAYER_SETTINGS));
     const room = await createRoom(owner, level, {
       name: index === 0 ? "Classic Rotation" : "Bwadi Practice",
       visibility: "public",
@@ -1519,6 +1518,26 @@ function normalizePlacementType(value: unknown): AdPlacementType | null {
 
 function normalizeAdEventType(value: unknown): AdEventType | null {
   return value === "impression" || value === "click" ? value : null;
+}
+
+function normalizePlayerSettings(value: unknown, base: PlayerSettings = DEFAULT_PLAYER_SETTINGS): PlayerSettings {
+  const input = typeof value === "object" && value ? (value as Partial<Record<keyof PlayerSettings, unknown>>) : {};
+  const sensitivityValue = Number(input.sensitivity ?? base.sensitivity);
+
+  return {
+    controlPreset:
+      input.controlPreset === "classic" || input.controlPreset === "modernized"
+        ? input.controlPreset
+        : base.controlPreset,
+    sensitivity: Number.isFinite(sensitivityValue) ? Math.max(0.2, Math.min(2, sensitivityValue)) : base.sensitivity,
+    invertY: typeof input.invertY === "boolean" ? input.invertY : base.invertY,
+    graphicsQuality:
+      input.graphicsQuality === "performance" || input.graphicsQuality === "balanced" || input.graphicsQuality === "quality"
+        ? input.graphicsQuality
+        : base.graphicsQuality,
+    showPerformanceHud:
+      typeof input.showPerformanceHud === "boolean" ? input.showPerformanceHud : base.showPerformanceHud
+  };
 }
 
 function normalizeStringArray(value: unknown): string[] {

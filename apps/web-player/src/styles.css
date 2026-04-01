@@ -34,6 +34,10 @@ select {
   font: inherit;
 }
 
+a {
+  color: inherit;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: minmax(260px, 320px) minmax(0, 1fr) minmax(260px, 340px);
@@ -263,6 +267,25 @@ select {
   font-size: 0.92rem;
 }
 
+.heading-indicator {
+  position: relative;
+  height: 8px;
+  margin: 10px 0 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.heading-indicator-fill {
+  position: absolute;
+  top: 0;
+  width: 12%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #7ed0ff 0%, #ffd179 100%);
+  transform: translateX(-50%);
+}
+
 .respawn-banner {
   margin-top: 12px;
   padding: 10px 12px;
@@ -299,6 +322,14 @@ select {
 .event-line {
   color: var(--muted);
   font-size: 0.92rem;
+}
+
+.prompt-strip {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 0.86rem;
 }
 
 .match-banner {
@@ -386,6 +417,109 @@ select {
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 14px;
+}
+
+.field input[type="range"] {
+  padding: 0;
+  accent-color: var(--accent);
+  background: transparent;
+  border: 0;
+}
+
+.field-inline,
+.card-actions,
+.binding-row,
+.checklist-item,
+.notice-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.field-inline {
+  margin-top: -4px;
+  margin-bottom: 12px;
+}
+
+.toggle-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 14px 0;
+  color: var(--text);
+}
+
+.toggle-field input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+.preset-copy {
+  margin-top: -4px;
+}
+
+.binding-list,
+.checklist,
+.notice-list {
+  display: grid;
+  gap: 10px;
+}
+
+.binding-list {
+  margin-top: 16px;
+}
+
+.binding-row,
+.checklist-item,
+.notice-card {
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.binding-row span,
+.checklist-item span {
+  color: var(--muted);
+}
+
+.checklist-item {
+  align-items: flex-start;
+  flex-direction: column;
+}
+
+.checklist-item-done {
+  border-color: rgba(116, 216, 255, 0.3);
+  background: rgba(116, 216, 255, 0.08);
+}
+
+.card-actions {
+  margin-top: 16px;
+}
+
+.card-actions .primary-button,
+.card-actions .secondary-button {
+  width: 100%;
+}
+
+.notice-card {
+  align-items: flex-start;
+  flex-direction: column;
+}
+
+.notice-card p {
+  margin: 0;
+}
+
+.inline-link {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.inline-link:hover {
+  text-decoration: underline;
 }
 
 .primary-button {
@@ -505,5 +639,9 @@ select {
 
   .inline-ad-card {
     grid-template-columns: 1fr;
+  }
+
+  .card-actions {
+    flex-direction: column;
   }
 }

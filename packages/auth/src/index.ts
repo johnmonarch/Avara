@@ -3,7 +3,9 @@ import type { Identity, PlayerSettings } from "@avara/shared-types";
 export const DEFAULT_PLAYER_SETTINGS: PlayerSettings = {
   controlPreset: "modernized",
   sensitivity: 0.75,
-  invertY: false
+  invertY: false,
+  graphicsQuality: "balanced",
+  showPerformanceHud: false
 };
 
 export function createGuestIdentity(displayName?: string): Identity {

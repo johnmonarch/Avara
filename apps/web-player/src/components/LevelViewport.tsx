@@ -7,15 +7,24 @@ import type {
   SnapshotPlayerState,
   SnapshotProjectileState
 } from "@avara/shared-protocol";
-import type { LevelBillboardAssignment, LevelScene, SceneNode } from "@avara/shared-types";
+import type { GraphicsQuality, LevelBillboardAssignment, LevelScene, PlayerSettings, SceneNode } from "@avara/shared-types";
+import { CONTROL_PRESET_BINDINGS } from "@avara/shared-ui";
 
 interface LevelViewportProps {
   scene: LevelScene | null;
   billboards: LevelBillboardAssignment[];
   snapshot: SnapshotPacket | null;
   localPlayerId?: string;
+  playerSettings: PlayerSettings;
   prototypeStatus: "idle" | "bootstrapping" | "live";
   onAimChange?: (aim: { aimYaw: number; aimPitch: number }) => void;
+  onPointerLockChange?: (locked: boolean) => void;
+  onTelemetryChange?: (input: {
+    fps: number | null;
+    pixelRatio: number;
+    quality: GraphicsQuality;
+    compatibilityError: string | null;
+  }) => void;
 }
 
 interface BspShapeData {
@@ -32,18 +41,28 @@ export default function LevelViewport({
   billboards,
   snapshot,
   localPlayerId,
+  playerSettings,
   prototypeStatus,
-  onAimChange
+  onAimChange,
+  onPointerLockChange,
+  onTelemetryChange
 }: LevelViewportProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const [pointerLocked, setPointerLocked] = useState(false);
-  const [renderStats, setRenderStats] = useState({ nodes: 0, meshes: 0 });
+  const [renderStats, setRenderStats] = useState({
+    nodes: 0,
+    meshes: 0,
+    fps: null as number | null,
+    pixelRatio: 1,
+    compatibilityError: null as string | null
+  });
   const heading = useRef({ yaw: Math.PI / 2, pitch: -0.14 });
   const snapshotRef = useRef<SnapshotPacket | null>(snapshot);
   const localPlayerIdRef = useRef(localPlayerId);
   const aimCallbackRef = useRef(onAimChange);
   const billboardRef = useRef<LevelBillboardAssignment[]>(billboards);
   const boundPlayerIdRef = useRef("");
+  const settingsRef = useRef(playerSettings);
 
   useEffect(() => {
     snapshotRef.current = snapshot;
@@ -61,6 +80,23 @@ export default function LevelViewport({
     billboardRef.current = billboards;
   }, [billboards]);
 
+  useEffect(() => {
+    settingsRef.current = playerSettings;
+  }, [playerSettings]);
+
+  useEffect(() => {
+    onPointerLockChange?.(pointerLocked);
+  }, [onPointerLockChange, pointerLocked]);
+
+  useEffect(() => {
+    onTelemetryChange?.({
+      fps: renderStats.fps,
+      pixelRatio: renderStats.pixelRatio,
+      quality: playerSettings.graphicsQuality,
+      compatibilityError: renderStats.compatibilityError
+    });
+  }, [onTelemetryChange, playerSettings.graphicsQuality, renderStats.compatibilityError, renderStats.fps, renderStats.pixelRatio]);
+
   const spawnAnchor = useMemo(() => {
     const spawn = scene?.nodes.find((node) => node.type === "spawn") ?? scene?.nodes[0];
     return spawn?.position ?? { x: 0, y: 0, z: 0 };
@@ -72,14 +108,21 @@ export default function LevelViewport({
   );
 
   const leaderboard = useMemo(
-    () => (snapshot?.players ?? []).slice().sort((left, right) => {
-      if (left.kills !== right.kills) {
-        return right.kills - left.kills;
-      }
-      return left.deaths - right.deaths;
-    }),
+    () =>
+      (snapshot?.players ?? []).slice().sort((left, right) => {
+        if (left.kills !== right.kills) {
+          return right.kills - left.kills;
+        }
+        return left.deaths - right.deaths;
+      }),
     [snapshot]
   );
+
+  const legHeadingDegrees = localPlayer
+    ? Math.round((normalizeAngle(localPlayer.turretYaw - localPlayer.bodyYaw) * 180) / Math.PI)
+    : 0;
+
+  const presetPrompts = CONTROL_PRESET_BINDINGS[playerSettings.controlPreset];
 
   useEffect(() => {
     if (!localPlayer) {
@@ -105,16 +148,39 @@ export default function LevelViewport({
     }
 
     let cancelled = false;
+    let animationHandle = 0;
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setPixelRatio(window.devicePixelRatio);
+    const profile = getRenderProfile(playerSettings.graphicsQuality);
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({
+        antialias: profile.antialias,
+        alpha: true,
+        powerPreference: "high-performance"
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Renderer initialization failed";
+      setRenderStats((current) => ({
+        ...current,
+        compatibilityError: message
+      }));
+      return;
+    }
+
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, profile.pixelRatioCap);
+    renderer.setPixelRatio(pixelRatio);
     renderer.setSize(mount.clientWidth, mount.clientHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     mount.appendChild(renderer.domElement);
+    setRenderStats((current) => ({
+      ...current,
+      pixelRatio,
+      compatibilityError: null
+    }));
 
     const threeScene = new THREE.Scene();
     threeScene.background = new THREE.Color(scene.environment.skyColors[0] ?? "#9bd7ff");
-    threeScene.fog = new THREE.Fog(scene.environment.skyColors[1] ?? "#dbe8ff", 140, 320);
+    threeScene.fog = new THREE.Fog(scene.environment.skyColors[1] ?? "#dbe8ff", 140, profile.fogFar);
 
     const camera = new THREE.PerspectiveCamera(72, mount.clientWidth / mount.clientHeight, 0.1, 1000);
 
@@ -158,7 +224,11 @@ export default function LevelViewport({
 
     void populateScene(sceneRoot, scene.nodes).then((meshCount) => {
       if (!cancelled) {
-        setRenderStats({ nodes: scene.nodes.length, meshes: meshCount });
+        setRenderStats((current) => ({
+          ...current,
+          nodes: scene.nodes.length,
+          meshes: meshCount
+        }));
       }
     });
 
@@ -168,7 +238,7 @@ export default function LevelViewport({
       renderer.setSize(mount.clientWidth, mount.clientHeight);
     };
 
-    const onPointerLockChange = () => {
+    const onPointerLockChangeInternal = () => {
       setPointerLocked(document.pointerLockElement === renderer.domElement);
     };
 
@@ -177,9 +247,13 @@ export default function LevelViewport({
         return;
       }
 
-      heading.current.yaw -= event.movementX * 0.0024;
+      const yawScale = 0.0024 * settingsRef.current.sensitivity;
+      const pitchScale = 0.0017 * settingsRef.current.sensitivity;
+      const pitchDirection = settingsRef.current.invertY ? 1 : -1;
+
+      heading.current.yaw -= event.movementX * yawScale;
       heading.current.pitch = THREE.MathUtils.clamp(
-        heading.current.pitch - event.movementY * 0.0017,
+        heading.current.pitch + event.movementY * pitchScale * pitchDirection,
         -0.55,
         0.32
       );
@@ -190,12 +264,20 @@ export default function LevelViewport({
     };
 
     window.addEventListener("resize", onResize);
-    document.addEventListener("pointerlockchange", onPointerLockChange);
+    document.addEventListener("pointerlockchange", onPointerLockChangeInternal);
     document.addEventListener("mousemove", onMouseMove);
     renderer.domElement.addEventListener("click", onClick);
 
+    let sampleStart = performance.now();
+    let framesSinceSample = 0;
+
     const animate = () => {
       if (cancelled) {
+        return;
+      }
+
+      animationHandle = requestAnimationFrame(animate);
+      if (document.hidden) {
         return;
       }
 
@@ -231,24 +313,48 @@ export default function LevelViewport({
       );
 
       renderer.render(threeScene, camera);
-      requestAnimationFrame(animate);
+
+      framesSinceSample += 1;
+      const now = performance.now();
+      if (now - sampleStart >= 500) {
+        const nextFps = Math.round((framesSinceSample * 1000) / (now - sampleStart));
+        framesSinceSample = 0;
+        sampleStart = now;
+        setRenderStats((current) =>
+          current.fps === nextFps
+            ? current
+            : {
+                ...current,
+                fps: nextFps
+              }
+        );
+      }
     };
 
-    animate();
+    animationHandle = requestAnimationFrame(animate);
 
     return () => {
       cancelled = true;
       window.removeEventListener("resize", onResize);
-      document.removeEventListener("pointerlockchange", onPointerLockChange);
+      document.removeEventListener("pointerlockchange", onPointerLockChangeInternal);
       document.removeEventListener("mousemove", onMouseMove);
       renderer.domElement.removeEventListener("click", onClick);
+      cancelAnimationFrame(animationHandle);
       renderer.dispose();
       mount.innerHTML = "";
     };
-  }, [scene, spawnAnchor]);
+  }, [playerSettings.graphicsQuality, scene, spawnAnchor]);
 
   if (!scene) {
     return <div className="viewport-empty">Select a room or level to load imported geometry.</div>;
+  }
+
+  if (renderStats.compatibilityError) {
+    return (
+      <div className="viewport-shell viewport-empty">
+        Renderer unavailable: {renderStats.compatibilityError}
+      </div>
+    );
   }
 
   return (
@@ -258,11 +364,12 @@ export default function LevelViewport({
       {!pointerLocked ? (
         <div className="pointer-lock-overlay">
           <div className="pointer-lock-card">
-            <span className="eyebrow">Phase 1 Combat</span>
+            <span className="eyebrow">{playerSettings.controlPreset === "classic" ? "Classic Controls" : "Modernized Controls"}</span>
             <h3>Click the arena to lock your pointer</h3>
             <p>
-              Move with W/S, rotate the chassis with A/D, aim the turret with the mouse, fire with click or space, and
-              queue missiles or grenades with Q and E.
+              {playerSettings.controlPreset === "classic"
+                ? "Drive with W/S, rotate the chassis with A/D, aim with the mouse, fire with left click, and keep crouch or jump on Space."
+                : "Drive with W/S or arrows, rotate the chassis with A/D or arrows, fire with click or Space, and use F/G aliases for weapon loads."}
             </p>
           </div>
         </div>
@@ -273,10 +380,19 @@ export default function LevelViewport({
       <div className="viewport-hud viewport-hud-top">
         <div className="hud-pill">Imported scene: {scene.title}</div>
         <div className="hud-pill">Actors: {renderStats.nodes}</div>
-        <div className="hud-pill">Billboards: {billboards.filter((billboard) => billboard.campaignId).length}/{billboards.length}</div>
+        <div className="hud-pill">
+          Billboards: {billboards.filter((billboard) => billboard.campaignId).length}/{billboards.length}
+        </div>
         <div className="hud-pill">Players: {snapshot?.players.length ?? 0}</div>
         <div className="hud-pill">Match: {snapshot?.roomStatus ?? prototypeStatus}</div>
+        <div className="hud-pill">Render: {playerSettings.graphicsQuality}</div>
         {snapshot ? <div className="hud-pill">{snapshot.remainingSeconds}s left</div> : null}
+        {playerSettings.showPerformanceHud ? (
+          <>
+            <div className="hud-pill">FPS: {renderStats.fps ?? "…"}</div>
+            <div className="hud-pill">Scale: {renderStats.pixelRatio.toFixed(2)}x</div>
+          </>
+        ) : null}
       </div>
 
       {localPlayer ? (
@@ -295,8 +411,22 @@ export default function LevelViewport({
               <span>Grenades {localPlayer.grenadeAmmo}</span>
             </div>
             <div className="hud-row">
+              <span>Leg direction</span>
+              <strong>{legHeadingDegrees >= 0 ? `+${legHeadingDegrees}` : legHeadingDegrees}°</strong>
+            </div>
+            <div className="heading-indicator">
+              <span
+                className="heading-indicator-fill"
+                style={{
+                  left: `${50 + Math.max(-45, Math.min(45, legHeadingDegrees))}%`
+                }}
+              />
+            </div>
+            <div className="hud-row">
               <span>Score</span>
-              <strong>{localPlayer.kills} / {localPlayer.deaths}</strong>
+              <strong>
+                {localPlayer.kills} / {localPlayer.deaths}
+              </strong>
             </div>
             {!localPlayer.alive ? (
               <div className="respawn-banner">Respawning in {localPlayer.respawnSeconds}s</div>
@@ -314,6 +444,15 @@ export default function LevelViewport({
                 <strong>{player.kills}</strong>
               </div>
             ))}
+            {playerSettings.controlPreset === "modernized" ? (
+              <div className="prompt-strip">
+                {presetPrompts.slice(0, 4).map((prompt) => (
+                  <span key={prompt.action}>
+                    {prompt.action}: {prompt.keys}
+                  </span>
+                ))}
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -335,6 +474,30 @@ export default function LevelViewport({
       ) : null}
     </div>
   );
+}
+
+function getRenderProfile(quality: GraphicsQuality): { antialias: boolean; pixelRatioCap: number; fogFar: number } {
+  switch (quality) {
+    case "performance":
+      return {
+        antialias: false,
+        pixelRatioCap: 1,
+        fogFar: 260
+      };
+    case "quality":
+      return {
+        antialias: true,
+        pixelRatioCap: 2,
+        fogFar: 360
+      };
+    case "balanced":
+    default:
+      return {
+        antialias: true,
+        pixelRatioCap: 1.5,
+        fogFar: 320
+      };
+  }
 }
 
 async function populateScene(root: THREE.Group, nodes: SceneNode[]): Promise<number> {
@@ -744,7 +907,6 @@ async function updateBillboardSurface(
   surface.material.needsUpdate = true;
 
   const size = node.size ?? { width: 14, height: 7, depth: 0.4 };
-  surface.scale.set(texture.image ? 1 : 1, 1, 1);
   surface.position.set(0, 0, size.depth / 2 + 0.03);
 }
 
