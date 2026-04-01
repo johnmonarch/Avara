@@ -65,15 +65,21 @@ export async function discoverLevelCatalog(levelsRoot: string): Promise<LevelSum
           slug: levelId.replace(/[:/]/g, "-").toLowerCase(),
           title: levelEntry.Name,
           message: levelEntry.Message ?? "",
+          source: "official_repo",
           packSlug: entry.name,
           packTitle,
+          packageId: undefined,
           alfPath: levelEntry.Alf,
           entryIndex: index,
           isOfficial: true,
           moderationStatus: "official",
           recommendedPlayers: [2, 8],
           levelPreviewUrl: null,
-          sceneUrl: `/levels/${encodeURIComponent(levelId)}/scene`
+          sceneUrl: `/levels/${encodeURIComponent(levelId)}/scene`,
+          creatorName: "Avara Legacy Import",
+          uploadedAt: new Date(0).toISOString(),
+          publicPlayable: true,
+          privatePlayable: true
         }
       });
     });

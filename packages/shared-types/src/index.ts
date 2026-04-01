@@ -8,6 +8,7 @@ export type UserRole =
 
 export type Visibility = "public" | "private" | "unlisted";
 export type RoomStatus = "warming" | "waiting" | "active" | "ended";
+export type LevelSource = "official_repo" | "community_upload" | "promoted_upload";
 export type ModerationStatus =
   | "draft"
   | "private_test"
@@ -58,8 +59,10 @@ export interface LevelSummary {
   slug: string;
   title: string;
   message: string;
+  source: LevelSource;
   packSlug: string;
   packTitle: string;
+  packageId?: string;
   alfPath: string;
   entryIndex: number;
   isOfficial: boolean;
@@ -67,6 +70,10 @@ export interface LevelSummary {
   recommendedPlayers: [number, number];
   levelPreviewUrl: string | null;
   sceneUrl: string;
+  creatorName?: string;
+  uploadedAt?: string;
+  publicPlayable: boolean;
+  privatePlayable: boolean;
 }
 
 export interface SceneEnvironment {
@@ -143,6 +150,7 @@ export interface DashboardStats {
   activeRooms: number;
   matchStartsPerHour: number;
   uploadQueueHealthy: boolean;
+  uploadsPendingReview: number;
   adCampaignsLive: number;
   serverHealth: "healthy" | "degraded" | "offline";
   importedOfficialLevels: number;
@@ -183,4 +191,57 @@ export interface UploadValidationResult {
   ok: boolean;
   normalizedManifest: Record<string, unknown> | null;
   issues: UploadValidationIssue[];
+  archiveChecksum?: string;
+  fileCount?: number;
+  totalBytes?: number;
+  suggestedPackSlug?: string | null;
+  previewPath?: string | null;
+  levelEntries?: Array<{
+    alfPath: string;
+    title: string;
+    message: string;
+  }>;
+}
+
+export interface UploadJob {
+  id: string;
+  fileName: string;
+  packageId: string | null;
+  status: "processing" | "validated" | "failed" | "published";
+  moderationStatus: ModerationStatus | null;
+  createdAt: string;
+  completedAt: string | null;
+  byteSize: number;
+  archiveChecksum: string | null;
+  extractedPackSlug: string | null;
+  levelIds: string[];
+  normalizedManifest: Record<string, unknown> | null;
+  issues: UploadValidationIssue[];
+}
+
+export interface LevelPackageSummary {
+  id: string;
+  slug: string;
+  title: string;
+  source: LevelSource;
+  moderationStatus: ModerationStatus;
+  version: string;
+  uploaderDisplayName: string;
+  uploadedAt: string;
+  checksum: string;
+  fileCount: number;
+  levelIds: string[];
+  storagePath: string | null;
+  previewAssetUrl: string | null;
+}
+
+export interface AuditEvent {
+  id: string;
+  action: string;
+  actorDisplayName: string;
+  actorUserId: string | null;
+  targetType: "upload_job" | "level" | "level_package" | "campaign" | "room";
+  targetId: string;
+  createdAt: string;
+  payload: Record<string, unknown>;
 }

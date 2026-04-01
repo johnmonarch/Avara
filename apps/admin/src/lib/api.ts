@@ -1,4 +1,14 @@
-import type { AdCampaign, DashboardStats, LevelSummary, RoomDetail, UploadValidationResult } from "@avara/shared-types";
+import type {
+  AdCampaign,
+  AuditEvent,
+  DashboardStats,
+  LevelPackageSummary,
+  LevelSummary,
+  ModerationStatus,
+  RoomDetail,
+  UploadJob,
+  UploadValidationResult
+} from "@avara/shared-types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080";
 
@@ -21,6 +31,21 @@ export async function fetchCampaigns(): Promise<AdCampaign[]> {
   return payload.campaigns;
 }
 
+export async function fetchUploadJobs(): Promise<UploadJob[]> {
+  const payload = await apiRequest<{ uploads: UploadJob[] }>("/admin/uploads");
+  return payload.uploads;
+}
+
+export async function fetchAuditEvents(): Promise<AuditEvent[]> {
+  const payload = await apiRequest<{ events: AuditEvent[] }>("/admin/audit");
+  return payload.events;
+}
+
+export async function fetchPackages(): Promise<LevelPackageSummary[]> {
+  const payload = await apiRequest<{ packages: LevelPackageSummary[] }>("/admin/packages");
+  return payload.packages;
+}
+
 export async function createCampaign(payload: Partial<AdCampaign>): Promise<AdCampaign> {
   const response = await apiRequest<{ campaign: AdCampaign }>("/admin/ads/campaigns", {
     method: "POST",
@@ -37,22 +62,44 @@ export async function updateCampaign(campaignId: string, payload: Partial<AdCamp
   return response.campaign;
 }
 
-export async function validateUploadCandidate(): Promise<UploadValidationResult> {
-  return apiRequest<UploadValidationResult>("/levels/uploads", {
+export async function uploadLevelPackage(
+  file: File,
+  moderationStatus: ModerationStatus
+): Promise<{
+  job: UploadJob;
+  validation: UploadValidationResult;
+  package: LevelPackageSummary | null;
+  levels: LevelSummary[];
+}> {
+  const response = await fetch(`${API_BASE_URL}/levels/uploads`, {
     method: "POST",
-    body: JSON.stringify({
-      manifest: {
-        title: "Browser Upload Candidate",
-        version: "1.0.0"
-      },
-      files: [
-        { path: "manifest.json", size: 812 },
-        { path: "set.json", size: 3120 },
-        { path: "alf/arena.alf", size: 18560 },
-        { path: "audio/intro.ogg", size: 264000 }
-      ]
-    })
+    headers: {
+      "Content-Type": "application/octet-stream",
+      "X-Avara-Filename": file.name,
+      "X-Avara-Level-State": moderationStatus
+    },
+    body: file
   });
+
+  if (!response.ok && response.status !== 422) {
+    const message = await readErrorMessage(response);
+    throw new Error(message);
+  }
+
+  return (await response.json()) as {
+    job: UploadJob;
+    validation: UploadValidationResult;
+    package: LevelPackageSummary | null;
+    levels: LevelSummary[];
+  };
+}
+
+export async function updateLevelModeration(levelId: string, moderationStatus: ModerationStatus): Promise<LevelSummary> {
+  const payload = await apiRequest<{ level: LevelSummary }>(`/admin/levels/${encodeURIComponent(levelId)}/moderation`, {
+    method: "PATCH",
+    body: JSON.stringify({ moderationStatus })
+  });
+  return payload.level;
 }
 
 async function apiRequest<T>(pathname: string, init: RequestInit = {}): Promise<T> {
@@ -67,8 +114,18 @@ async function apiRequest<T>(pathname: string, init: RequestInit = {}): Promise<
   });
 
   if (!response.ok) {
-    throw new Error(`Admin API request failed with status ${response.status}`);
+    const message = await readErrorMessage(response);
+    throw new Error(message);
   }
 
   return (await response.json()) as T;
+}
+
+async function readErrorMessage(response: Response): Promise<string> {
+  try {
+    const payload = (await response.json()) as { error?: string };
+    return payload.error ?? `Admin API request failed with status ${response.status}`;
+  } catch {
+    return `Admin API request failed with status ${response.status}`;
+  }
 }

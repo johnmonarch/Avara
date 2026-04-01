@@ -5,35 +5,45 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { selectBillboardAssignments, selectCampaignsForPlacement } from "@avara/ads-engine";
-import { validateNormalizedPackage } from "@avara/asset-pipeline";
+import { prepareUploadedPackage, validateNormalizedPackage, writePreparedPackage } from "@avara/asset-pipeline";
 import { createGuestIdentity, DEFAULT_PLAYER_SETTINGS } from "@avara/auth";
 import { discoverLevelCatalog, parseLevelScene } from "@avara/level-parser";
 import type {
   AdCampaign,
+  AuditEvent,
   DashboardStats,
   Identity,
+  LevelPackageSummary,
   LevelScene,
   LevelSummary,
+  ModerationStatus,
   PlayerSettings,
   RoomDetail,
   RoomPlayer,
-  RoomSummary
+  RoomSummary,
+  UploadJob
 } from "@avara/shared-types";
 import { log } from "@avara/telemetry";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const workspaceRoot = path.resolve(__dirname, "../../..");
 const levelsRoot = path.join(workspaceRoot, "levels");
+const storageRoot = path.join(workspaceRoot, ".avara-storage");
+const uploadArchiveRoot = path.join(storageRoot, "uploads");
 const port = Number(process.env.PORT ?? "8080");
 const matchmakerUrl = process.env.MATCHMAKER_URL ?? "http://127.0.0.1:8090";
 const defaultGameServerUrl = process.env.GAME_SERVER_URL ?? "http://127.0.0.1:8091";
 const roomPresenceGraceMs = Number(process.env.ROOM_PRESENCE_GRACE_SECONDS ?? "20") * 1000;
 
-const catalog = await discoverLevelCatalog(levelsRoot);
+let catalog = (await discoverLevelCatalog(levelsRoot)).map(hydrateOfficialLevelSummary);
 const levelsById = new Map(catalog.map((level) => [level.id, level]));
 const identities = new Map<string, Identity>();
 const settingsByUserId = new Map<string, PlayerSettings>();
-const uploadReports: Array<{ id: string; createdAt: string; ok: boolean; issues: number }> = [];
+const levelPackages = new Map<string, LevelPackageSummary>();
+const packageIdsByLevelId = new Map<string, string>();
+const uploadJobs = new Map<string, UploadJob>();
+const auditEvents: AuditEvent[] = [];
+seedOfficialLevelPackages(catalog, levelPackages, packageIdsByLevelId);
 
 const adCampaigns: AdCampaign[] = seedCampaigns(catalog);
 const rooms = new Map<string, RoomDetail>();
@@ -98,7 +108,7 @@ const server = createServer(async (request, response) => {
 
     if (request.method === "GET" && pathname === "/levels") {
       return sendJson(response, 200, {
-        levels: catalog,
+        levels: catalog.filter(isLevelVisibleInBrowserCatalog),
         importedPackCount: new Set(catalog.map((level) => level.packSlug)).size
       });
     }
@@ -140,18 +150,134 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === "POST" && pathname === "/levels/uploads") {
-      const body = await readJsonBody(request);
-      const report = validateNormalizedPackage({
-        manifest: body?.manifest ?? {},
-        files: Array.isArray(body?.files) ? body.files : []
+      const contentType = getHeaderValue(request, "content-type") ?? "";
+      if (contentType.includes("application/json")) {
+        const body = await readJsonBody(request);
+        const report = validateNormalizedPackage({
+          manifest: body?.manifest ?? {},
+          files: Array.isArray(body?.files) ? body.files : []
+        });
+        const job = registerLegacyValidationJob(report, Number(body?.byteSize ?? 0));
+        return sendJson(response, report.ok ? 200 : 422, { job, validation: report });
+      }
+
+      const archive = await readBinaryBody(request);
+      const fileName = sanitizeUploadFileName(getHeaderValue(request, "x-avara-filename") ?? "level-package.zip");
+      const requestedState = normalizeUploadModerationState(getHeaderValue(request, "x-avara-level-state"));
+      const prepared = prepareUploadedPackage(fileName, archive);
+      const uploadedAt = new Date().toISOString();
+      const jobId = `upload_${crypto.randomUUID()}`;
+      const job: UploadJob = {
+        id: jobId,
+        fileName,
+        packageId: null,
+        status: prepared.validation.ok ? "validated" : "failed",
+        moderationStatus: prepared.validation.ok ? requestedState : null,
+        createdAt: uploadedAt,
+        completedAt: uploadedAt,
+        byteSize: archive.length,
+        archiveChecksum: prepared.archiveChecksum,
+        extractedPackSlug: null,
+        levelIds: [],
+        normalizedManifest: prepared.validation.normalizedManifest,
+        issues: prepared.validation.issues
+      };
+
+      uploadJobs.set(job.id, job);
+      recordAuditEvent({
+        action: "level_upload_received",
+        actorDisplayName: "Admin panel",
+        actorUserId: null,
+        targetType: "upload_job",
+        targetId: job.id,
+        payload: {
+          fileName,
+          byteSize: archive.length,
+          requestedState
+        }
       });
-      uploadReports.push({
-        id: crypto.randomUUID(),
-        createdAt: new Date().toISOString(),
-        ok: report.ok,
-        issues: report.issues.length
+
+      if (!prepared.validation.ok || !prepared.normalizedManifest || !prepared.suggestedPackSlug) {
+        recordAuditEvent({
+          action: "level_upload_failed",
+          actorDisplayName: "Admin panel",
+          actorUserId: null,
+          targetType: "upload_job",
+          targetId: job.id,
+          payload: {
+            fileName,
+            issues: prepared.validation.issues.length
+          }
+        });
+        return sendJson(response, 422, {
+          job,
+          validation: prepared.validation,
+          package: null,
+          levels: []
+        });
+      }
+
+      const packageId = `package_${crypto.randomUUID()}`;
+      const packSlug = createUploadedPackSlug(prepared.suggestedPackSlug, packageId);
+      const packRoot = path.join(levelsRoot, packSlug);
+      const archiveRelativePath = path.join(".avara-storage", "uploads", `${packageId}.zip`);
+      const archiveAbsolutePath = path.join(workspaceRoot, archiveRelativePath);
+      await fs.mkdir(uploadArchiveRoot, { recursive: true });
+      await fs.writeFile(archiveAbsolutePath, archive);
+      await writePreparedPackage(packRoot, prepared);
+
+      const levels = buildUploadedLevelsFromPackage({
+        packSlug,
+        packageId,
+        moderationStatus: requestedState,
+        manifest: prepared.normalizedManifest,
+        levelEntries: prepared.levelEntries,
+        previewPath: prepared.previewPath,
+        uploadedAt
       });
-      return sendJson(response, report.ok ? 200 : 422, report);
+      const levelPackage = createUploadedLevelPackage({
+        packageId,
+        packSlug,
+        uploadedAt,
+        uploadedBy: "Admin panel",
+        moderationStatus: requestedState,
+        archiveRelativePath,
+        previewPath: prepared.previewPath,
+        validation: prepared.validation,
+        levelIds: levels.map((level) => level.id)
+      });
+
+      job.packageId = packageId;
+      job.extractedPackSlug = packSlug;
+      job.levelIds = levelPackage.levelIds;
+      job.status = isPublishedState(requestedState) ? "published" : "validated";
+
+      levelPackages.set(levelPackage.id, levelPackage);
+      for (const level of levels) {
+        upsertLevel(level);
+        packageIdsByLevelId.set(level.id, packageId);
+      }
+
+      recordAuditEvent({
+        action: "level_upload_validated",
+        actorDisplayName: "Admin panel",
+        actorUserId: null,
+        targetType: "level_package",
+        targetId: levelPackage.id,
+        payload: {
+          fileName,
+          packSlug,
+          moderationStatus: requestedState,
+          levelCount: levels.length
+        }
+      });
+
+      return sendJson(response, 201, {
+        job,
+        validation: prepared.validation,
+        package: levelPackage,
+        levels
+      });
     }
 
     if (request.method === "GET" && pathname === "/rooms") {
@@ -167,14 +293,21 @@ const server = createServer(async (request, response) => {
     if (request.method === "POST" && pathname === "/rooms") {
       const identity = ensureIdentity(request);
       const body = await readJsonBody(request);
-      const level = levelsById.get(body?.levelId) ?? catalog[0];
+      const requestedVisibility = normalizeVisibility(body?.visibility);
+      const level = levelsById.get(body?.levelId) ?? catalog.find(isLevelVisibleInBrowserCatalog);
       if (!level) {
         return sendJson(response, 400, { error: "No importable levels are available" });
       }
 
+      if (!canCreateRoomForLevel(level, requestedVisibility)) {
+        return sendJson(response, 403, {
+          error: "This level can only be used in private or unlisted rooms until moderation approves it"
+        });
+      }
+
       const room = await createRoom(identity, level, {
         name: body?.name,
-        visibility: body?.visibility,
+        visibility: requestedVisibility,
         playerCap: body?.playerCap
       });
       rooms.set(room.id, room);
@@ -286,23 +419,27 @@ const server = createServer(async (request, response) => {
       return sendJson(response, 200, { room });
     }
 
-    if (request.method === "POST" && pathname.startsWith("/admin/levels/") && pathname.endsWith("/approve")) {
-      const levelId = decodeURIComponent(pathname.slice("/admin/levels/".length, -"/approve".length));
+    if (request.method === "PATCH" && pathname.startsWith("/admin/levels/") && pathname.endsWith("/moderation")) {
+      const levelId = decodeURIComponent(pathname.slice("/admin/levels/".length, -"/moderation".length));
       const level = levelsById.get(levelId);
       if (!level) {
         return sendJson(response, 404, { error: "Level not found" });
       }
-      level.moderationStatus = "approved";
-      return sendJson(response, 200, { level });
-    }
 
-    if (request.method === "POST" && pathname.startsWith("/admin/levels/") && pathname.endsWith("/reject")) {
-      const levelId = decodeURIComponent(pathname.slice("/admin/levels/".length, -"/reject".length));
-      const level = levelsById.get(levelId);
-      if (!level) {
-        return sendJson(response, 404, { error: "Level not found" });
-      }
-      level.moderationStatus = "rejected";
+      const body = await readJsonBody(request);
+      const nextState = normalizeModerationStatus(body?.moderationStatus);
+      applyModerationStateToLevel(level, nextState);
+      recordAuditEvent({
+        action: "level_moderation_updated",
+        actorDisplayName: "Admin panel",
+        actorUserId: null,
+        targetType: "level",
+        targetId: level.id,
+        payload: {
+          moderationStatus: nextState,
+          packageId: level.packageId ?? null
+        }
+      });
       return sendJson(response, 200, { level });
     }
 
@@ -311,17 +448,36 @@ const server = createServer(async (request, response) => {
         activeUsers: identities.size || 1,
         activeRooms: rooms.size,
         matchStartsPerHour: rooms.size * 3,
-        uploadQueueHealthy: uploadReports.every((report) => report.ok),
+        uploadQueueHealthy: Array.from(uploadJobs.values()).every((job) => job.status !== "failed"),
+        uploadsPendingReview: catalog.filter(
+          (level) => level.moderationStatus === "submitted" || level.moderationStatus === "private_test"
+        ).length,
         adCampaignsLive: adCampaigns.filter((campaign) => campaign.status === "live").length,
         serverHealth: "healthy",
-        importedOfficialLevels: catalog.length
+        importedOfficialLevels: catalog.filter((level) => level.isOfficial).length
       };
       return sendJson(response, 200, payload);
     }
 
     if (request.method === "GET" && pathname === "/admin/levels") {
       return sendJson(response, 200, {
-        levels: catalog
+        levels: sortLevels(catalog)
+      });
+    }
+
+    if (request.method === "GET" && pathname === "/admin/uploads") {
+      return sendJson(response, 200, {
+        uploads: Array.from(uploadJobs.values()).sort(
+          (left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt)
+        )
+      });
+    }
+
+    if (request.method === "GET" && pathname === "/admin/packages") {
+      return sendJson(response, 200, {
+        packages: Array.from(levelPackages.values()).sort(
+          (left, right) => Date.parse(right.uploadedAt) - Date.parse(left.uploadedAt)
+        )
       });
     }
 
@@ -342,6 +498,17 @@ const server = createServer(async (request, response) => {
       await terminateGameWorkerRoom(room);
       await releaseRoomAssignment(room.id);
       syncRoomCounts(room);
+      recordAuditEvent({
+        action: "room_terminated",
+        actorDisplayName: "Admin panel",
+        actorUserId: null,
+        targetType: "room",
+        targetId: room.id,
+        payload: {
+          roomName: room.name,
+          levelId: room.levelId
+        }
+      });
       return sendJson(response, 200, { room });
     }
 
@@ -368,6 +535,17 @@ const server = createServer(async (request, response) => {
         destinationUrl: typeof body?.destinationUrl === "string" ? body.destinationUrl : undefined
       };
       adCampaigns.push(campaign);
+      recordAuditEvent({
+        action: "campaign_created",
+        actorDisplayName: "Admin panel",
+        actorUserId: null,
+        targetType: "campaign",
+        targetId: campaign.id,
+        payload: {
+          name: campaign.name,
+          status: campaign.status
+        }
+      });
       return sendJson(response, 201, { campaign });
     }
 
@@ -396,17 +574,23 @@ const server = createServer(async (request, response) => {
           ? { destinationUrl: typeof body.destinationUrl === "string" ? body.destinationUrl : undefined }
           : {})
       });
+      recordAuditEvent({
+        action: "campaign_updated",
+        actorDisplayName: "Admin panel",
+        actorUserId: null,
+        targetType: "campaign",
+        targetId: campaign.id,
+        payload: {
+          name: campaign.name,
+          status: campaign.status
+        }
+      });
       return sendJson(response, 200, { campaign });
     }
 
     if (request.method === "GET" && pathname === "/admin/audit") {
       return sendJson(response, 200, {
-        events: uploadReports.map((report) => ({
-          id: report.id,
-          action: report.ok ? "level_upload_validated" : "level_upload_rejected",
-          createdAt: report.createdAt,
-          payload: report
-        }))
+        events: auditEvents
       });
     }
 
@@ -626,6 +810,277 @@ function loadLevelScene(levelId: string): Promise<LevelScene> {
   return nextScene;
 }
 
+function seedOfficialLevelPackages(
+  levels: LevelSummary[],
+  packages: Map<string, LevelPackageSummary>,
+  packageIndex: Map<string, string>
+): void {
+  const byPack = new Map<string, LevelSummary[]>();
+  for (const level of levels) {
+    const current = byPack.get(level.packSlug) ?? [];
+    current.push(level);
+    byPack.set(level.packSlug, current);
+  }
+
+  for (const [packSlug, packLevels] of byPack.entries()) {
+    const packageId = `package_official_${packSlug}`;
+    const uploadedAt = new Date(0).toISOString();
+    const levelPackage: LevelPackageSummary = {
+      id: packageId,
+      slug: packSlug,
+      title: packLevels[0]?.packTitle ?? packSlug,
+      source: "official_repo",
+      moderationStatus: "official",
+      version: "repo-import",
+      uploaderDisplayName: "Repo import",
+      uploadedAt,
+      checksum: `repo:${packSlug}`,
+      fileCount: packLevels.length,
+      levelIds: packLevels.map((level) => level.id),
+      storagePath: null,
+      previewAssetUrl: packLevels.find((level) => level.levelPreviewUrl)?.levelPreviewUrl ?? null
+    };
+    packages.set(packageId, levelPackage);
+    for (const level of packLevels) {
+      level.packageId = packageId;
+      packageIndex.set(level.id, packageId);
+      levelsById.set(level.id, level);
+    }
+  }
+}
+
+function hydrateOfficialLevelSummary(level: LevelSummary): LevelSummary {
+  return {
+    ...level,
+    source: level.source ?? "official_repo",
+    packageId: level.packageId,
+    creatorName: level.creatorName ?? "Avara Legacy Import",
+    uploadedAt: level.uploadedAt ?? new Date(0).toISOString(),
+    publicPlayable: level.publicPlayable ?? true,
+    privatePlayable: level.privatePlayable ?? true
+  };
+}
+
+function createUploadedLevelPackage(input: {
+  packageId: string;
+  packSlug: string;
+  uploadedAt: string;
+  uploadedBy: string;
+  moderationStatus: ModerationStatus;
+  archiveRelativePath: string;
+  previewPath: string | null;
+  validation: ReturnType<typeof prepareUploadedPackage>["validation"];
+  levelIds: string[];
+}): LevelPackageSummary {
+  return {
+    id: input.packageId,
+    slug: input.packSlug,
+    title: String(input.validation.normalizedManifest?.title ?? input.packSlug),
+    source: input.moderationStatus === "official" ? "promoted_upload" : "community_upload",
+    moderationStatus: input.moderationStatus,
+    version: String(input.validation.normalizedManifest?.version ?? "1.0.0"),
+    uploaderDisplayName: input.uploadedBy,
+    uploadedAt: input.uploadedAt,
+    checksum: input.validation.archiveChecksum ?? input.packageId,
+    fileCount: input.validation.fileCount ?? 0,
+    levelIds: input.levelIds,
+    storagePath: input.archiveRelativePath,
+    previewAssetUrl: input.previewPath ? toContentPath(path.join(levelsRoot, input.packSlug, input.previewPath)) : null
+  };
+}
+
+function buildUploadedLevelsFromPackage(input: {
+  packSlug: string;
+  packageId: string;
+  moderationStatus: ModerationStatus;
+  manifest: Record<string, unknown>;
+  levelEntries: Array<{ alfPath: string; title: string; message: string }>;
+  previewPath: string | null;
+  uploadedAt: string;
+}): LevelSummary[] {
+  const packTitle = String(input.manifest.title ?? input.packSlug);
+  const recommendedPlayers = Array.isArray(input.manifest.recommendedPlayers)
+    ? (input.manifest.recommendedPlayers as [number, number])
+    : [2, 8];
+  const previewUrl = input.previewPath ? toContentPath(path.join(levelsRoot, input.packSlug, input.previewPath)) : null;
+
+  return input.levelEntries.map((entry, index) => ({
+    id: `${input.packSlug}:${entry.alfPath}`,
+    slug: `${input.packSlug}-${entry.alfPath}`.replace(/[:/]/g, "-").toLowerCase(),
+    title: entry.title,
+    message: entry.message,
+    source: input.moderationStatus === "official" ? "promoted_upload" : "community_upload",
+    packSlug: input.packSlug,
+    packTitle,
+    packageId: input.packageId,
+    alfPath: entry.alfPath,
+    entryIndex: index,
+    isOfficial: input.moderationStatus === "official",
+    moderationStatus: input.moderationStatus,
+    recommendedPlayers,
+    levelPreviewUrl: previewUrl,
+    sceneUrl: `/levels/${encodeURIComponent(`${input.packSlug}:${entry.alfPath}`)}/scene`,
+    creatorName: "Admin panel",
+    uploadedAt: input.uploadedAt,
+    publicPlayable: isPublishedState(input.moderationStatus),
+    privatePlayable: input.moderationStatus !== "archived" && input.moderationStatus !== "rejected"
+  }));
+}
+
+function upsertLevel(level: LevelSummary): void {
+  levelsById.set(level.id, level);
+  const existingIndex = catalog.findIndex((entry) => entry.id === level.id);
+  if (existingIndex === -1) {
+    catalog.push(level);
+  } else {
+    catalog[existingIndex] = level;
+  }
+  catalog = sortLevels(catalog);
+  sceneCache.delete(level.id);
+}
+
+function sortLevels(levels: LevelSummary[]): LevelSummary[] {
+  return levels
+    .slice()
+    .sort((left, right) => {
+      if (left.isOfficial !== right.isOfficial) {
+        return left.isOfficial ? -1 : 1;
+      }
+      if (left.packTitle !== right.packTitle) {
+        return left.packTitle.localeCompare(right.packTitle);
+      }
+      return left.title.localeCompare(right.title);
+    });
+}
+
+function isLevelVisibleInBrowserCatalog(level: LevelSummary): boolean {
+  return level.moderationStatus !== "rejected" && level.moderationStatus !== "archived";
+}
+
+function canCreateRoomForLevel(level: LevelSummary, visibility: RoomDetail["visibility"]): boolean {
+  if (!level.privatePlayable) {
+    return false;
+  }
+  if (visibility === "public") {
+    return level.publicPlayable;
+  }
+  return true;
+}
+
+function isPublishedState(state: ModerationStatus): boolean {
+  return state === "approved" || state === "official";
+}
+
+function applyModerationStateToLevel(level: LevelSummary, moderationStatus: ModerationStatus): void {
+  level.moderationStatus = moderationStatus;
+  level.isOfficial = moderationStatus === "official";
+  level.source = moderationStatus === "official" ? "promoted_upload" : level.source === "official_repo" ? "official_repo" : "community_upload";
+  level.publicPlayable = isPublishedState(moderationStatus) || moderationStatus === "official";
+  level.privatePlayable = moderationStatus !== "archived" && moderationStatus !== "rejected";
+
+  const packageId = level.packageId ?? packageIdsByLevelId.get(level.id);
+  if (!packageId) {
+    upsertLevel(level);
+    return;
+  }
+
+  const pack = levelPackages.get(packageId);
+  if (pack) {
+    pack.moderationStatus = moderationStatus;
+    pack.source = moderationStatus === "official" ? "promoted_upload" : pack.source === "official_repo" ? "official_repo" : "community_upload";
+  }
+
+  for (const candidate of catalog) {
+    if (candidate.packageId === packageId) {
+      candidate.moderationStatus = moderationStatus;
+      candidate.isOfficial = moderationStatus === "official";
+      candidate.source =
+        moderationStatus === "official"
+          ? "promoted_upload"
+          : candidate.source === "official_repo"
+            ? "official_repo"
+            : "community_upload";
+      candidate.publicPlayable = isPublishedState(moderationStatus) || moderationStatus === "official";
+      candidate.privatePlayable = moderationStatus !== "archived" && moderationStatus !== "rejected";
+      levelsById.set(candidate.id, candidate);
+    }
+  }
+
+  catalog = sortLevels(catalog);
+}
+
+function normalizeModerationStatus(value: unknown): ModerationStatus {
+  if (
+    value === "draft" ||
+    value === "private_test" ||
+    value === "submitted" ||
+    value === "approved" ||
+    value === "rejected" ||
+    value === "archived" ||
+    value === "official"
+  ) {
+    return value;
+  }
+
+  return "submitted";
+}
+
+function normalizeUploadModerationState(value: string | undefined): ModerationStatus {
+  const next = normalizeModerationStatus(value);
+  return next === "draft" ? "private_test" : next;
+}
+
+function registerLegacyValidationJob(validation: ReturnType<typeof validateNormalizedPackage>, byteSize: number): UploadJob {
+  const job: UploadJob = {
+    id: `upload_${crypto.randomUUID()}`,
+    fileName: "normalized-package.json",
+    packageId: null,
+    status: validation.ok ? "validated" : "failed",
+    moderationStatus: null,
+    createdAt: new Date().toISOString(),
+    completedAt: new Date().toISOString(),
+    byteSize,
+    archiveChecksum: null,
+    extractedPackSlug: null,
+    levelIds: [],
+    normalizedManifest: validation.normalizedManifest,
+    issues: validation.issues
+  };
+  uploadJobs.set(job.id, job);
+  recordAuditEvent({
+    action: validation.ok ? "level_upload_validated" : "level_upload_failed",
+    actorDisplayName: "Admin panel",
+    actorUserId: null,
+    targetType: "upload_job",
+    targetId: job.id,
+    payload: {
+      mode: "legacy_json_validation",
+      issues: validation.issues.length
+    }
+  });
+  return job;
+}
+
+function createUploadedPackSlug(suggestedPackSlug: string, packageId: string): string {
+  return `_uploaded-${suggestedPackSlug}-${packageId.slice(-6).toLowerCase()}`;
+}
+
+function recordAuditEvent(input: Omit<AuditEvent, "id" | "createdAt">): void {
+  auditEvents.unshift({
+    ...input,
+    id: `audit_${crypto.randomUUID()}`,
+    createdAt: new Date().toISOString()
+  });
+  if (auditEvents.length > 200) {
+    auditEvents.length = 200;
+  }
+}
+
+function toContentPath(filePath: string): string {
+  const relativePath = path.relative(workspaceRoot, filePath).split(path.sep).join("/");
+  return `/content/${relativePath}`;
+}
+
 function normalizePlacementTypes(value: unknown, fallback: AdCampaign["placementTypes"]): AdCampaign["placementTypes"] {
   const filtered = normalizeStringArray(value).filter((placement): placement is AdCampaign["placementTypes"][number] =>
     ["lobby_banner", "level_loading", "results_banner", "level_billboard"].includes(placement)
@@ -758,6 +1213,28 @@ async function readJsonBody(request: AsyncIterable<Buffer>): Promise<Record<stri
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
+async function readBinaryBody(request: AsyncIterable<Buffer>): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) {
+    chunks.push(chunk);
+  }
+
+  return Buffer.concat(chunks);
+}
+
+function getHeaderValue(request: IncomingMessage, name: string): string | undefined {
+  const header = request.headers[name.toLowerCase()];
+  if (Array.isArray(header)) {
+    return header[0];
+  }
+  return typeof header === "string" ? header : undefined;
+}
+
+function sanitizeUploadFileName(value: string): string {
+  const trimmed = path.basename(value.trim() || "level-package.zip");
+  return trimmed.toLowerCase().endsWith(".zip") ? trimmed : `${trimmed}.zip`;
+}
+
 async function serveContentFile(pathname: string, response: ServerResponse) {
   const relativePath = pathname.replace(/^\/content\//, "");
   const targetPath = path.resolve(workspaceRoot, relativePath);
@@ -795,7 +1272,7 @@ function guessContentType(filePath: string): string {
 
 function setCorsHeaders(response: { setHeader(name: string, value: string): void }): void {
   response.setHeader("Access-Control-Allow-Origin", "*");
-  response.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Avara-User");
+  response.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Avara-User, X-Avara-Filename, X-Avara-Level-State");
   response.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,OPTIONS");
 }
 

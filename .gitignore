@@ -26,3 +26,5 @@ dist
 .vite
 coverage
 *.tsbuildinfo
+.avara-storage/
+levels/_uploaded-*/

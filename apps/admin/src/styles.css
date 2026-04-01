@@ -71,7 +71,7 @@ button {
 
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 14px;
 }
 
@@ -99,6 +99,11 @@ button {
 
 .admin-card {
   padding: 18px;
+}
+
+.upload-card {
+  display: grid;
+  gap: 16px;
 }
 
 .section-header {
@@ -144,6 +149,28 @@ th {
   display: grid;
   grid-template-columns: 1.2fr 0.8fr;
   gap: 18px;
+}
+
+.upload-form,
+.upload-summary-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.upload-summary-grid {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.summary-tile {
+  padding: 14px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.summary-tile strong,
+.summary-tile small {
+  display: block;
 }
 
 .campaign-list {
@@ -204,6 +231,10 @@ th {
   color: var(--ink);
 }
 
+.field input[type="file"] {
+  padding: 10px 12px;
+}
+
 .editor-actions {
   display: flex;
   align-items: center;
@@ -224,6 +255,12 @@ th {
 .validation-bad {
   background: rgba(255, 141, 130, 0.12);
   border: 1px solid rgba(255, 141, 130, 0.3);
+}
+
+.validation-good ul,
+.validation-bad ul {
+  margin: 12px 0 0;
+  padding-left: 18px;
 }
 
 .error-text {
