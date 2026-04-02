@@ -1,9 +1,9 @@
-FROM node:22-alpine
+FROM node:22-bookworm-slim
 
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 
-RUN corepack enable
+RUN corepack enable && corepack prepare pnpm@10.14.0 --activate
 
 WORKDIR /app
 
@@ -12,7 +12,7 @@ ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 
 COPY . .
 
-RUN pnpm install --no-frozen-lockfile
+RUN pnpm --version && pnpm install --no-frozen-lockfile --reporter append-only
 RUN pnpm --filter @avara/web-player build
 
 EXPOSE 3000
