@@ -803,12 +803,9 @@ export function App() {
     <div className="app-shell">
       <aside className="panel panel-left">
         <div className="brand-block">
-          <span className="eyebrow">Avara Web</span>
-          <h1>Phase 5 turns the playable prototype into a beta surface with saved controls, renderer tuning, compatibility guidance, and creator-facing docs.</h1>
-          <p>
-            Official and community levels still flow through the centralized stack, but the browser experience now has a
-            real first-play ramp instead of assuming desktop-shooter muscle memory.
-          </p>
+          <span className="eyebrow">Avara Online</span>
+          <h1>Classic mech combat, rebuilt for the browser.</h1>
+          <p>Create or join a room, lock the pointer, and pilot through imported Avara levels with guest-friendly controls.</p>
         </div>
 
         <div className="card">
@@ -816,10 +813,7 @@ export function App() {
             <h2>Identity</h2>
             <span>{identity?.displayName ?? "Loading guest…"}</span>
           </div>
-          <p>
-            Guest-first onboarding remains intact. Your sensitivity, invert-Y, preset choice, and graphics profile now
-            persist per guest identity through the API.
-          </p>
+          <p>Your controls and graphics settings stay saved in this browser, so you can jump back into a room without redoing setup.</p>
           <div className="pilot-summary">
             <span>{identity?.guest ? "Guest identity" : "Registered identity"}</span>
             <span>{formatGraphicsQuality(playerSettings.graphicsQuality)} renderer</span>
@@ -830,13 +824,10 @@ export function App() {
         {!onboardingDismissed ? (
           <div className="card">
             <div className="card-header">
-              <h2>Launch Guide</h2>
-              <span>First play</span>
+              <h2>How to Start</h2>
+              <span>Quick start</span>
             </div>
-            <p>
-              Modernized reduces learning friction with alias keys and clearer HUD prompts. Classic stays close to the
-              original documented layout.
-            </p>
+            <p>Modernized is the easiest way in. Create or join a room, click the arena to capture the mouse, and start moving.</p>
             <div className="checklist">
               {onboardingChecklist.map((step) => (
                 <div key={step.id} className={step.done ? "checklist-item checklist-item-done" : "checklist-item"}>
@@ -979,8 +970,8 @@ export function App() {
 
         <div className="card">
           <div className="card-header">
-            <h2>Lobby banner</h2>
-            <span>{activeLobbyCampaign ? activeLobbyCampaign.name : "House fill"}</span>
+            <h2>Featured Banner</h2>
+            <span>{activeLobbyCampaign ? activeLobbyCampaign.name : "No sponsor"}</span>
           </div>
           {activeLobbyCampaign ? (
             <>
@@ -1002,7 +993,7 @@ export function App() {
 
         <div className="card">
           <div className="card-header">
-            <h2>Create room</h2>
+            <h2>Start a Room</h2>
             <span>{featuredLevel?.title ?? "No level selected"}</span>
           </div>
           <label className="field">
@@ -1022,14 +1013,14 @@ export function App() {
               : "Room creation is disabled until the imported level catalog loads from the API."}
           </p>
           <button className="primary-button" disabled={!featuredLevel || busy} onClick={handleCreateRoom}>
-            {busy ? "Working…" : "Create centralized room"}
+            {busy ? "Working…" : "Create room"}
           </button>
         </div>
 
         <div className="card">
           <div className="card-header">
-            <h2>Invite link</h2>
-            <span>Join by code</span>
+            <h2>Join a Room</h2>
+            <span>Invite code</span>
           </div>
           <label className="field">
             <span>Invite code</span>
@@ -1048,8 +1039,8 @@ export function App() {
       <main className="main-stage">
         <div className="hero-bar">
           <div>
-            <span className="eyebrow">Beta Surface</span>
-            <h2>{featuredLevel?.title ?? "Select a room"}</h2>
+            <span className="eyebrow">Live Arena</span>
+            <h2>{featuredLevel?.title ?? "Choose a room"}</h2>
           </div>
           <div className="hero-status">
             <span>{rooms.length} visible rooms</span>
@@ -1137,7 +1128,7 @@ export function App() {
         <div className="card">
           <div className="card-header">
             <h2>Room browser</h2>
-            <span>Centralized infrastructure</span>
+            <span>Live rooms</span>
           </div>
           <div className="room-list">
             {rooms.length ? (
@@ -1170,7 +1161,7 @@ export function App() {
         <div className="card">
           <div className="card-header">
             <h2>Room detail</h2>
-            <span>{selectedRoom ? selectedRoom.inviteCode : "Select a room"}</span>
+            <span>{selectedRoom ? selectedRoom.inviteCode : "Nothing selected"}</span>
           </div>
           {selectedRoom ? (
             <>
@@ -1207,7 +1198,7 @@ export function App() {
 
         <div className="card">
           <div className="card-header">
-            <h2>Compatibility</h2>
+            <h2>System</h2>
             <span>{compatibilityNotes.length ? "Attention" : "Healthy"}</span>
           </div>
           {compatibilityNotes.length ? (
@@ -1231,12 +1222,12 @@ export function App() {
           </div>
         </div>
 
-        <div className="card">
-          <div className="card-header">
-            <h2>Billboard server</h2>
-            <span>{billboards.length} slots</span>
-          </div>
-          {billboards.length ? (
+        {billboards.length ? (
+          <div className="card">
+            <div className="card-header">
+              <h2>Arena billboards</h2>
+              <span>{billboards.length} active</span>
+            </div>
             <div className="pilot-summary">
               {billboards.map((billboard) => (
                 <span key={billboard.nodeId}>
@@ -1244,50 +1235,35 @@ export function App() {
                 </span>
               ))}
             </div>
-          ) : (
-            <p className="muted">Level-owned billboard placeholders will show their current campaign rotation here.</p>
-          )}
-        </div>
-
-        <div className="card">
-          <div className="card-header">
-            <h2>Creator docs</h2>
-            <span>Validator-aligned</span>
           </div>
-          <p>
-            Package structure, moderation flow, banned-content rules, and in-level billboard slot markup are documented in{" "}
-            <a className="inline-link" href="/creator-level-packages.md" target="_blank" rel="noreferrer">
-              creator-level-packages.md
-            </a>
-            .
-          </p>
-          <p className="muted">Private-test uploads remain allowed before moderation, but script execution and archive escapes stay blocked.</p>
-        </div>
+        ) : null}
 
-        <div className="card">
-          <div className="card-header">
-            <h2>Results placement</h2>
-            <span>{snapshot?.roomStatus === "ended" ? "Match ended" : "Waiting"}</span>
+        {snapshot?.roomStatus === "ended" ? (
+          <div className="card">
+            <div className="card-header">
+              <h2>Match results</h2>
+              <span>Final</span>
+            </div>
+            {activeResultsCampaign ? (
+              <>
+                <img className="ad-surface" src={activeResultsCampaign.creativeUrl} alt={activeResultsCampaign.name} />
+                <p className="muted">{activeResultsCampaign.name}</p>
+                {activeResultsCampaign.destinationUrl ? (
+                  <button className="secondary-button" onClick={() => handleAdClick(activeResultsCampaign, "results_banner")}>
+                    Open sponsor
+                  </button>
+                ) : null}
+              </>
+            ) : (
+              <p className="muted">The room has ended.</p>
+            )}
           </div>
-          {snapshot?.roomStatus === "ended" && activeResultsCampaign ? (
-            <>
-              <img className="ad-surface" src={activeResultsCampaign.creativeUrl} alt={activeResultsCampaign.name} />
-              <p className="muted">{activeResultsCampaign.name}</p>
-              {activeResultsCampaign.destinationUrl ? (
-                <button className="secondary-button" onClick={() => handleAdClick(activeResultsCampaign, "results_banner")}>
-                  Open sponsor
-                </button>
-              ) : null}
-            </>
-          ) : (
-            <p className="muted">Results campaigns appear here when a match ends.</p>
-          )}
-        </div>
+        ) : null}
 
         <div className="card">
           <div className="card-header">
-            <h2>Imported catalog</h2>
-            <span>Official launch seed</span>
+            <h2>Level catalog</h2>
+            <span>{levels.length ? "Available now" : "Waiting on API"}</span>
           </div>
           <div className="level-list">
             {levels.length ? (

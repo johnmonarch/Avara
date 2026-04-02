@@ -13,8 +13,8 @@ import type {
   Visibility
 } from "@avara/shared-types";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080";
-const GAME_SERVER_URL = import.meta.env.VITE_GAME_SERVER_URL ?? "http://localhost:8091";
+const API_BASE_URL = resolveServiceUrl(import.meta.env.VITE_API_BASE_URL, "api", "http://localhost:8080");
+const GAME_SERVER_URL = resolveServiceUrl(import.meta.env.VITE_GAME_SERVER_URL, "game", "http://localhost:8091");
 const identityStorageKey = "avara-web-player-id";
 const adSessionStorageKey = "avara-web-player-ad-session";
 
@@ -306,4 +306,41 @@ async function readErrorMessage(response: Response, url: string): Promise<string
 
   const target = new URL(url);
   return `Request to ${target.host} failed with status ${response.status}.`;
+}
+
+function resolveServiceUrl(configuredUrl: string | undefined, service: "api" | "game", localFallback: string): string {
+  const browserUrl = typeof window === "undefined" ? null : new URL(window.location.href);
+  const browserHost = browserUrl?.hostname ?? "";
+  const browserIsLocal = isLocalHost(browserHost);
+
+  if (configuredUrl) {
+    try {
+      const parsed = new URL(configuredUrl);
+      if (!isLocalHost(parsed.hostname) || browserIsLocal || !browserUrl) {
+        return configuredUrl;
+      }
+    } catch {
+      return configuredUrl;
+    }
+  }
+
+  if (browserUrl && !browserIsLocal) {
+    const baseHost = getBaseHost(browserUrl.hostname);
+    return `${browserUrl.protocol}//${service}.${baseHost}`;
+  }
+
+  return configuredUrl ?? localFallback;
+}
+
+function getBaseHost(hostname: string): string {
+  const labels = hostname.split(".");
+  if (labels.length > 2 && ["api", "game", "admin", "play", "web"].includes(labels[0])) {
+    return labels.slice(1).join(".");
+  }
+
+  return hostname;
+}
+
+function isLocalHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
 }

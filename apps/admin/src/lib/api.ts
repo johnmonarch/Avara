@@ -12,7 +12,7 @@ import type {
   UploadValidationResult
 } from "@avara/shared-types";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080";
+const API_BASE_URL = resolveApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
 
 export async function fetchDashboard(): Promise<DashboardStats> {
   return apiRequest<DashboardStats>("/admin/dashboard");
@@ -139,4 +139,32 @@ async function readErrorMessage(response: Response): Promise<string> {
   } catch {
     return `Admin API request failed with status ${response.status}`;
   }
+}
+
+function resolveApiBaseUrl(configuredUrl: string | undefined): string {
+  const browserUrl = typeof window === "undefined" ? null : new URL(window.location.href);
+  const browserHost = browserUrl?.hostname ?? "";
+  const browserIsLocal = browserHost === "localhost" || browserHost === "127.0.0.1" || browserHost === "::1";
+
+  if (configuredUrl) {
+    try {
+      const parsed = new URL(configuredUrl);
+      const configuredIsLocal = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1" || parsed.hostname === "::1";
+      if (!configuredIsLocal || browserIsLocal || !browserUrl) {
+        return configuredUrl;
+      }
+    } catch {
+      return configuredUrl;
+    }
+  }
+
+  if (browserUrl && !browserIsLocal) {
+    const labels = browserUrl.hostname.split(".");
+    const baseHost = labels.length > 2 && ["api", "game", "admin", "play", "web"].includes(labels[0])
+      ? labels.slice(1).join(".")
+      : browserUrl.hostname;
+    return `${browserUrl.protocol}//api.${baseHost}`;
+  }
+
+  return configuredUrl ?? "http://localhost:8080";
 }
