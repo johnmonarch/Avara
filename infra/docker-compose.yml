@@ -5,9 +5,11 @@ services:
       dockerfile: apps/web-player/Dockerfile
       network: host
       args:
-        VITE_API_BASE_URL: ${PUBLIC_API_URL:-http://localhost:8080}
+        PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8080}
+        PUBLIC_GAME_SERVER_URL: ${PUBLIC_GAME_SERVER_URL:-http://localhost:8091}
     environment:
       VITE_API_BASE_URL: ${PUBLIC_API_URL:-http://localhost:8080}
+      VITE_GAME_SERVER_URL: ${PUBLIC_GAME_SERVER_URL:-http://localhost:8091}
     depends_on:
       api:
         condition: service_healthy
@@ -29,7 +31,7 @@ services:
       dockerfile: apps/admin/Dockerfile
       network: host
       args:
-        VITE_API_BASE_URL: ${PUBLIC_API_URL:-http://localhost:8080}
+        PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8080}
     environment:
       VITE_API_BASE_URL: ${PUBLIC_API_URL:-http://localhost:8080}
     depends_on:
