@@ -295,16 +295,24 @@ async function jsonRequest<T>(url: string, init: RequestInit = {}): Promise<T> {
 }
 
 async function readErrorMessage(response: Response, url: string): Promise<string> {
+  const target = new URL(url);
+
   try {
     const payload = (await response.json()) as { error?: string };
     if (payload.error) {
       return payload.error;
     }
   } catch {
-    // Ignore response parsing errors and fall back to a status message.
+    try {
+      const text = (await response.clone().text()).trim();
+      if (text) {
+        return `${target.host} returned ${response.status}: ${text}`;
+      }
+    } catch {
+      // Ignore body parsing errors and fall back to a status message.
+    }
   }
 
-  const target = new URL(url);
   return `Request to ${target.host} failed with status ${response.status}.`;
 }
 

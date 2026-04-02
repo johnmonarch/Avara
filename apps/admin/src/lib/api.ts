@@ -137,7 +137,12 @@ async function readErrorMessage(response: Response): Promise<string> {
     const payload = (await response.json()) as { error?: string };
     return payload.error ?? `Admin API request failed with status ${response.status}`;
   } catch {
-    return `Admin API request failed with status ${response.status}`;
+    try {
+      const text = (await response.clone().text()).trim();
+      return text ? `Admin API request failed with status ${response.status}: ${text}` : `Admin API request failed with status ${response.status}`;
+    } catch {
+      return `Admin API request failed with status ${response.status}`;
+    }
   }
 }
 

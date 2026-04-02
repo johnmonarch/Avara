@@ -10,6 +10,8 @@ services:
     environment:
       VITE_API_BASE_URL: ${PUBLIC_API_URL:-http://localhost:8080}
       VITE_GAME_SERVER_URL: ${PUBLIC_GAME_SERVER_URL:-http://localhost:8091}
+    expose:
+      - "3000"
     depends_on:
       api:
         condition: service_healthy
@@ -34,6 +36,8 @@ services:
         PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8080}
     environment:
       VITE_API_BASE_URL: ${PUBLIC_API_URL:-http://localhost:8080}
+    expose:
+      - "3001"
     depends_on:
       api:
         condition: service_healthy
@@ -62,6 +66,8 @@ services:
       REDIS_URL: redis://redis:6379
       S3_ENDPOINT: http://minio:9000
       S3_BUCKET: ${S3_BUCKET:-avara-levels}
+    expose:
+      - "8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -90,6 +96,8 @@ services:
       PORT: 8090
       GAME_SERVER_URL: ${PUBLIC_GAME_SERVER_URL:-http://localhost:8091}
       GAME_WORKERS: game-worker-1|${PUBLIC_GAME_SERVER_URL:-http://localhost:8091}|64
+    expose:
+      - "8090"
     healthcheck:
       test:
         [
@@ -110,6 +118,8 @@ services:
     environment:
       PORT: 8091
       TICK_RATE: 20
+    expose:
+      - "8091"
     depends_on:
       redis:
         condition: service_healthy
@@ -155,6 +165,9 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-avara}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-avara-dev-password}
+    expose:
+      - "9000"
+      - "9001"
     volumes:
       - minio-data:/data
     healthcheck:
