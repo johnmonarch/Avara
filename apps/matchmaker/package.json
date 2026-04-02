@@ -7,6 +7,6 @@
     "dev": "node src/server.ts"
   },
   "dependencies": {
-    "@avara/telemetry": "workspace:*"
+    "@avara/telemetry": "file:../../packages/telemetry"
   }
 }

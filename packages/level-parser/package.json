@@ -7,6 +7,6 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@avara/shared-types": "workspace:*"
+    "@avara/shared-types": "file:../shared-types"
   }
 }

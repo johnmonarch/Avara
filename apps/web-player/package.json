@@ -9,9 +9,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@avara/shared-protocol": "workspace:*",
-    "@avara/shared-types": "workspace:*",
-    "@avara/shared-ui": "workspace:*",
+    "@avara/shared-protocol": "file:../../packages/shared-protocol",
+    "@avara/shared-types": "file:../../packages/shared-types",
+    "@avara/shared-ui": "file:../../packages/shared-ui",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "three": "^0.176.0"

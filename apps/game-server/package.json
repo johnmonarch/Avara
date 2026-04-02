@@ -7,9 +7,9 @@
     "dev": "node src/server.ts"
   },
   "dependencies": {
-    "@avara/level-parser": "workspace:*",
-    "@avara/shared-protocol": "workspace:*",
-    "@avara/shared-types": "workspace:*",
-    "@avara/telemetry": "workspace:*"
+    "@avara/level-parser": "file:../../packages/level-parser",
+    "@avara/shared-protocol": "file:../../packages/shared-protocol",
+    "@avara/shared-types": "file:../../packages/shared-types",
+    "@avara/telemetry": "file:../../packages/telemetry"
   }
 }

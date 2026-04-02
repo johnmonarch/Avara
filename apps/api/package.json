@@ -7,11 +7,11 @@
     "dev": "node src/server.ts"
   },
   "dependencies": {
-    "@avara/ads-engine": "workspace:*",
-    "@avara/asset-pipeline": "workspace:*",
-    "@avara/auth": "workspace:*",
-    "@avara/level-parser": "workspace:*",
-    "@avara/shared-types": "workspace:*",
-    "@avara/telemetry": "workspace:*"
+    "@avara/ads-engine": "file:../../packages/ads-engine",
+    "@avara/asset-pipeline": "file:../../packages/asset-pipeline",
+    "@avara/auth": "file:../../packages/auth",
+    "@avara/level-parser": "file:../../packages/level-parser",
+    "@avara/shared-types": "file:../../packages/shared-types",
+    "@avara/telemetry": "file:../../packages/telemetry"
   }
 }
