@@ -372,6 +372,35 @@ a {
   box-shadow: var(--shadow);
 }
 
+.start-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px;
+  border-radius: 24px;
+  border: 1px solid rgba(116, 216, 255, 0.22);
+  background: rgba(15, 25, 36, 0.82);
+  box-shadow: var(--shadow);
+}
+
+.start-card strong {
+  display: block;
+  margin: 6px 0 8px;
+  font-size: 1.05rem;
+}
+
+.start-card p {
+  margin: 0;
+}
+
+.start-card-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  min-width: max-content;
+}
+
 .ad-surface-inline {
   margin-top: 0;
 }
@@ -567,6 +596,7 @@ a {
   gap: 10px;
 }
 
+.empty-state-card,
 .preset,
 .room-card,
 .level-chip,
@@ -582,6 +612,10 @@ a {
   text-align: left;
   color: inherit;
   cursor: pointer;
+}
+
+.empty-state-card p {
+  margin-bottom: 0;
 }
 
 .room-card span,
@@ -639,6 +673,22 @@ a {
 
   .inline-ad-card {
     grid-template-columns: 1fr;
+  }
+
+  .start-card {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .start-card-actions {
+    width: 100%;
+    min-width: 0;
+    flex-direction: column;
+  }
+
+  .start-card-actions .primary-button,
+  .start-card-actions .secondary-button {
+    width: 100%;
   }
 
   .card-actions {

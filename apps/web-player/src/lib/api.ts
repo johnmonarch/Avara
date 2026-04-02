@@ -276,14 +276,34 @@ async function jsonRequest<T>(url: string, init: RequestInit = {}): Promise<T> {
     headers.set("Content-Type", "application/json");
   }
 
-  const response = await fetch(url, {
-    ...init,
-    headers
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...init,
+      headers
+    });
+  } catch {
+    const target = new URL(url);
+    throw new Error(`Cannot reach ${target.host}. Check that the service is deployed and the Coolify domain is routing correctly.`);
+  }
 
   if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`);
+    throw new Error(await readErrorMessage(response, url));
   }
 
   return (await response.json()) as T;
+}
+
+async function readErrorMessage(response: Response, url: string): Promise<string> {
+  try {
+    const payload = (await response.json()) as { error?: string };
+    if (payload.error) {
+      return payload.error;
+    }
+  } catch {
+    // Ignore response parsing errors and fall back to a status message.
+  }
+
+  const target = new URL(url);
+  return `Request to ${target.host} failed with status ${response.status}.`;
 }

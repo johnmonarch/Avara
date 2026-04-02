@@ -1016,7 +1016,11 @@ export function App() {
               <option value="private">Private room</option>
             </select>
           </label>
-          <p>Public rooms appear in the browser. Private rooms stay link-driven, but guests can still host them.</p>
+          <p>
+            {featuredLevel
+              ? "Public rooms appear in the browser. Private rooms stay link-driven, but guests can still host them."
+              : "Room creation is disabled until the imported level catalog loads from the API."}
+          </p>
           <button className="primary-button" disabled={!featuredLevel || busy} onClick={handleCreateRoom}>
             {busy ? "Working…" : "Create centralized room"}
           </button>
@@ -1057,6 +1061,46 @@ export function App() {
           </div>
         </div>
 
+        {!connectedRoom ? (
+          <div className="start-card">
+            <div>
+              <span className="eyebrow">Start Match</span>
+              <strong>
+                {!levels.length
+                  ? "Catalog load failed"
+                  : selectedRoom
+                    ? `Join ${selectedRoom.name}`
+                    : `Create a room on ${featuredLevel?.title ?? "the imported level set"}`}
+              </strong>
+              <p className="muted">
+                {!levels.length
+                  ? "The browser did not get the imported level catalog from the API, so room creation is blocked until the API and domain routing are healthy."
+                  : selectedRoom
+                    ? "Join the selected room, then click the arena to lock the pointer and start moving."
+                    : "Create a room, then click the arena to lock the pointer. Drive with W and S, turn with A and D, fire with click or Space, and load missiles or grenades with Q and E."}
+              </p>
+            </div>
+            <div className="start-card-actions">
+              {selectedRoom ? (
+                <button className="secondary-button" disabled={busy} onClick={handleJoinSelectedRoom}>
+                  {busy ? "Working…" : "Join selected room"}
+                </button>
+              ) : null}
+              <button className="primary-button" disabled={!featuredLevel || busy} onClick={handleCreateRoom}>
+                {busy ? "Working…" : "Quick start: create room"}
+              </button>
+            </div>
+          </div>
+        ) : !pointerLocked ? (
+          <div className="start-card">
+            <div>
+              <span className="eyebrow">Pointer Lock</span>
+              <strong>Click the arena to take control</strong>
+              <p className="muted">Once the pointer is locked, the authoritative match loop is live and movement starts immediately.</p>
+            </div>
+          </div>
+        ) : null}
+
         {busy && activeLoadingCampaign ? (
           <div className="inline-ad-card">
             <div>
@@ -1096,23 +1140,30 @@ export function App() {
             <span>Centralized infrastructure</span>
           </div>
           <div className="room-list">
-            {rooms.map((room) => (
-              <button
-                key={room.id}
-                className={room.id === selectedRoom?.id ? "room-card room-card-active" : "room-card"}
-                onClick={() => {
-                  setSelectedRoomId(room.id);
-                  setActiveLevelId(room.levelId);
-                }}
-              >
-                <strong>{room.name}</strong>
-                <span>{room.levelTitle}</span>
-                <small>
-                  {room.currentPlayers}/{room.playerCap} pilots • {room.visibility} • {room.estimatedPingMs}ms • {room.status}
-                </small>
-                {room.id === connectedRoom?.id ? <small>Connected room</small> : null}
-              </button>
-            ))}
+            {rooms.length ? (
+              rooms.map((room) => (
+                <button
+                  key={room.id}
+                  className={room.id === selectedRoom?.id ? "room-card room-card-active" : "room-card"}
+                  onClick={() => {
+                    setSelectedRoomId(room.id);
+                    setActiveLevelId(room.levelId);
+                  }}
+                >
+                  <strong>{room.name}</strong>
+                  <span>{room.levelTitle}</span>
+                  <small>
+                    {room.currentPlayers}/{room.playerCap} pilots • {room.visibility} • {room.estimatedPingMs}ms • {room.status}
+                  </small>
+                  {room.id === connectedRoom?.id ? <small>Connected room</small> : null}
+                </button>
+              ))
+            ) : (
+              <div className="empty-state-card">
+                <strong>No rooms visible</strong>
+                <p>Use the Quick start action or the Create room panel on the left to spin up the first room.</p>
+              </div>
+            )}
           </div>
         </div>
 
@@ -1239,19 +1290,26 @@ export function App() {
             <span>Official launch seed</span>
           </div>
           <div className="level-list">
-            {levels.slice(0, 10).map((level) => (
-              <button
-                key={level.id}
-                className={level.id === activeLevelId ? "level-chip level-chip-active" : "level-chip"}
-                onClick={() => {
-                  setSelectedRoomId("");
-                  setActiveLevelId(level.id);
-                }}
-              >
-                <strong>{level.title}</strong>
-                <span>{level.packTitle}</span>
-              </button>
-            ))}
+            {levels.length ? (
+              levels.slice(0, 10).map((level) => (
+                <button
+                  key={level.id}
+                  className={level.id === activeLevelId ? "level-chip level-chip-active" : "level-chip"}
+                  onClick={() => {
+                    setSelectedRoomId("");
+                    setActiveLevelId(level.id);
+                  }}
+                >
+                  <strong>{level.title}</strong>
+                  <span>{level.packTitle}</span>
+                </button>
+              ))
+            ) : (
+              <div className="empty-state-card">
+                <strong>No imported levels available</strong>
+                <p>The API did not return a catalog, so the browser cannot create or preview a level yet.</p>
+              </div>
+            )}
           </div>
         </div>
 
