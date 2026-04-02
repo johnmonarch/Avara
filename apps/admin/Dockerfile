@@ -1,4 +1,4 @@
-FROM guergeiro/pnpm:22-10-slim
+FROM node:22-bookworm-slim
 
 WORKDIR /app
 
@@ -7,9 +7,9 @@ ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 
 COPY . .
 
-RUN pnpm --version && pnpm install --no-frozen-lockfile --reporter append-only
-RUN pnpm --filter @avara/admin build
+RUN npm --version && npm install --workspaces --include-workspace-root --loglevel=verbose
+RUN npm run build --workspace=@avara/admin
 
 EXPOSE 3001
 
-CMD ["pnpm", "--filter", "@avara/admin", "preview", "--", "--host", "0.0.0.0", "--port", "3001"]
+CMD ["npm", "run", "preview", "--workspace=@avara/admin", "--", "--host", "0.0.0.0", "--port", "3001"]

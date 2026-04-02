@@ -2,6 +2,10 @@
   "name": "avara-web-workspace",
   "private": true,
   "packageManager": "pnpm@10.14.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
     "dev:web-player": "pnpm --filter @avara/web-player dev",
     "dev:admin": "pnpm --filter @avara/admin dev",
