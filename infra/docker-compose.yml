@@ -8,8 +8,6 @@ services:
         VITE_API_BASE_URL: ${PUBLIC_API_URL:-http://localhost:8080}
     environment:
       VITE_API_BASE_URL: ${PUBLIC_API_URL:-http://localhost:8080}
-    ports:
-      - "3000:3000"
     depends_on:
       api:
         condition: service_healthy
@@ -34,8 +32,6 @@ services:
         VITE_API_BASE_URL: ${PUBLIC_API_URL:-http://localhost:8080}
     environment:
       VITE_API_BASE_URL: ${PUBLIC_API_URL:-http://localhost:8080}
-    ports:
-      - "3001:3001"
     depends_on:
       api:
         condition: service_healthy
@@ -64,8 +60,6 @@ services:
       REDIS_URL: redis://redis:6379
       S3_ENDPOINT: http://minio:9000
       S3_BUCKET: ${S3_BUCKET:-avara-levels}
-    ports:
-      - "8080:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -94,8 +88,6 @@ services:
       PORT: 8090
       GAME_SERVER_URL: ${PUBLIC_GAME_SERVER_URL:-http://localhost:8091}
       GAME_WORKERS: game-worker-1|${PUBLIC_GAME_SERVER_URL:-http://localhost:8091}|64
-    ports:
-      - "8090:8090"
     healthcheck:
       test:
         [
@@ -116,8 +108,6 @@ services:
     environment:
       PORT: 8091
       TICK_RATE: 20
-    ports:
-      - "8091:8091"
     depends_on:
       redis:
         condition: service_healthy
@@ -141,8 +131,6 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-avara}
       POSTGRES_USER: ${POSTGRES_USER:-avara}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-avara}
-    ports:
-      - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -153,8 +141,6 @@ services:
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 15s
@@ -167,9 +153,6 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-avara}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-avara-dev-password}
-    ports:
-      - "9000:9000"
-      - "9001:9001"
     volumes:
       - minio-data:/data
     healthcheck:
