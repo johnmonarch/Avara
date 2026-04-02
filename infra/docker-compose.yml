@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: apps/web-player/Dockerfile
+      network: host
       args:
         VITE_API_BASE_URL: ${PUBLIC_API_URL:-http://localhost:8080}
     environment:
@@ -22,6 +23,7 @@ services:
     build:
       context: .
       dockerfile: apps/admin/Dockerfile
+      network: host
       args:
         VITE_API_BASE_URL: ${PUBLIC_API_URL:-http://localhost:8080}
     environment:
@@ -41,6 +43,7 @@ services:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
+      network: host
     environment:
       PORT: 8080
       MATCHMAKER_URL: http://matchmaker:8090
@@ -68,6 +71,7 @@ services:
     build:
       context: .
       dockerfile: apps/matchmaker/Dockerfile
+      network: host
     environment:
       PORT: 8090
       GAME_SERVER_URL: ${PUBLIC_GAME_SERVER_URL:-http://localhost:8091}
@@ -84,6 +88,7 @@ services:
     build:
       context: .
       dockerfile: apps/game-server/Dockerfile
+      network: host
     environment:
       PORT: 8091
       TICK_RATE: 20
