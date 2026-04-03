@@ -48,6 +48,7 @@ export default function LevelViewport({
   onTelemetryChange
 }: LevelViewportProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
+  const pointerLockTargetRef = useRef<HTMLCanvasElement | null>(null);
   const [pointerLocked, setPointerLocked] = useState(false);
   const [renderStats, setRenderStats] = useState({
     nodes: 0,
@@ -172,6 +173,7 @@ export default function LevelViewport({
     renderer.setSize(mount.clientWidth, mount.clientHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     mount.appendChild(renderer.domElement);
+    pointerLockTargetRef.current = renderer.domElement;
     setRenderStats((current) => ({
       ...current,
       pixelRatio,
@@ -335,6 +337,7 @@ export default function LevelViewport({
 
     return () => {
       cancelled = true;
+      pointerLockTargetRef.current = null;
       window.removeEventListener("resize", onResize);
       document.removeEventListener("pointerlockchange", onPointerLockChangeInternal);
       document.removeEventListener("mousemove", onMouseMove);
@@ -357,12 +360,27 @@ export default function LevelViewport({
     );
   }
 
+  function requestPointerLock() {
+    pointerLockTargetRef.current?.requestPointerLock();
+  }
+
   return (
-    <div className="viewport-shell">
+    <div className="viewport-shell" onClick={!pointerLocked ? requestPointerLock : undefined}>
       <div className="viewport-canvas" ref={mountRef} />
 
       {!pointerLocked ? (
-        <div className="pointer-lock-overlay">
+        <div
+          className="pointer-lock-overlay"
+          role="button"
+          tabIndex={0}
+          onClick={requestPointerLock}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              requestPointerLock();
+            }
+          }}
+        >
           <div className="pointer-lock-card">
             <span className="eyebrow">{playerSettings.controlPreset === "classic" ? "Classic Controls" : "Modernized Controls"}</span>
             <h3>Click the arena to lock your pointer</h3>
