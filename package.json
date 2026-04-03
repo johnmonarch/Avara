@@ -12,6 +12,7 @@
     "dev:api": "node apps/api/src/server.ts",
     "dev:matchmaker": "node apps/matchmaker/src/server.ts",
     "dev:game-server": "node apps/game-server/src/server.ts",
+    "build:native-core": "node packages/native-core/scripts/build-native.mjs",
     "build:web-player": "pnpm --filter @avara/web-player build",
     "build:admin": "pnpm --filter @avara/admin build"
   },

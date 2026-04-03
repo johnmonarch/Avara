@@ -3,7 +3,7 @@ import type { RoomStatus } from "@avara/shared-types";
 export const PROTOCOL_VERSION = 1;
 
 export type WeaponLoad = "cannon" | "missile" | "grenade";
-export type ProjectileKind = "missile" | "grenade";
+export type ProjectileKind = "plasma" | "missile" | "grenade";
 export type PickupKind = "missiles" | "grenades" | "mixed";
 export type MatchEventType =
   | "spawn"
@@ -51,8 +51,19 @@ export interface SnapshotPlayerState {
   deaths: number;
   missileAmmo: number;
   grenadeAmmo: number;
+  boostsRemaining: number;
   weaponLoad: WeaponLoad;
+  energy?: number;
+  shields?: number;
+  gunEnergyLeft?: number;
+  gunEnergyRight?: number;
   respawnSeconds: number;
+  shapeId?: number;
+  shapeKey?: string;
+  shapeAssetUrl?: string;
+  scale?: number;
+  color?: string;
+  accentColor?: string;
 }
 
 export interface SnapshotProjectileState {
@@ -62,6 +73,15 @@ export interface SnapshotProjectileState {
   x: number;
   y: number;
   z: number;
+  yaw?: number;
+  pitch?: number;
+  roll?: number;
+  shapeId?: number;
+  shapeKey?: string;
+  shapeAssetUrl?: string;
+  scale?: number;
+  color?: string;
+  accentColor?: string;
 }
 
 export interface SnapshotPickupState {
@@ -72,6 +92,12 @@ export interface SnapshotPickupState {
   z: number;
   available: boolean;
   respawnSeconds: number;
+  shapeId?: number;
+  shapeKey?: string;
+  shapeAssetUrl?: string;
+  scale?: number;
+  color?: string;
+  accentColor?: string;
 }
 
 export interface MatchEventState {

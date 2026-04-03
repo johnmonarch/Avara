@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-import type { LevelScene, LevelSummary, SceneNode } from "@avara/shared-types";
+import type { LevelScene, LevelSummary, SceneLocalBounds, SceneNode } from "@avara/shared-types";
 
 const CURATED_PACK_PRIORITY = [
   "avaraline-strict-mode",
@@ -10,14 +10,6 @@ const CURATED_PACK_PRIORITY = [
   "aa-normal",
   "the-lexicon"
 ];
-
-const BUILTIN_PLACEHOLDER_SHAPES = new Set([
-  "bspGrenade",
-  "bspMissile",
-  "bspAvaraA",
-  "bspFloorFrame",
-  "bspHill"
-]);
 
 type ScriptContext = Record<string, number | string | boolean>;
 
@@ -35,6 +27,24 @@ interface RawLevelEntry {
 interface ParsedTag {
   name: string;
   attributes: Record<string, string>;
+}
+
+interface ParsedBspAsset {
+  bounds?: {
+    min?: [number, number, number];
+    max?: [number, number, number];
+  };
+}
+
+interface WallTemplate {
+  position: { x: number; y: number; z: number };
+  baseY: number;
+  size: { width: number; height: number; depth: number };
+  localBounds: SceneLocalBounds;
+}
+
+interface ParseState {
+  lastWallTemplate?: WallTemplate;
 }
 
 export async function discoverLevelCatalog(levelsRoot: string): Promise<LevelSummary[]> {
@@ -110,12 +120,14 @@ export async function parseLevelScene(levelsRoot: string, levelId: string): Prom
     throw new Error(`Unknown level id: ${levelId}`);
   }
 
-  const scriptContext = await loadPackScriptContext(resolved.packDir);
+  const scriptContext = await loadPackScriptContext(levelsRoot, resolved.packDir);
   const environment = {
     skyColors: ["#9bd7ff", "#d5e7ff"],
     groundColor: "#2c3138"
   };
   const nodes: SceneNode[] = [];
+  const context = { ...scriptContext, wallHeight: 1, wallYon: 0.01 };
+  const state: ParseState = {};
 
   const entryFile = await resolvePackLevelFile(resolved.packDir, resolved.summary.alfPath);
   await collectSceneFromFile({
@@ -124,7 +136,8 @@ export async function parseLevelScene(levelsRoot: string, levelId: string): Prom
     levelsRoot,
     environment,
     nodes,
-    context: { ...scriptContext, wallHeight: 1, wallYon: 0.01 }
+    context,
+    state
   });
 
   return {
@@ -133,6 +146,19 @@ export async function parseLevelScene(levelsRoot: string, levelId: string): Prom
     packSlug: resolved.summary.packSlug,
     entryPath: resolved.summary.alfPath,
     environment,
+    settings: {
+      gravity: readNumericSetting(context, "gravity", 1),
+      defaultTraction: readNumericSetting(context, "defaultTraction", 0.4),
+      defaultFriction: readNumericSetting(context, "defaultFriction", 0.15),
+      grenadePower: readNumericSetting(context, "grenadePower", 2.25),
+      missilePower: readNumericSetting(context, "missilePower", 1),
+      missileTurnRate: readNumericSetting(context, "missileTurnRate", 0.025),
+      missileAcceleration: readNumericSetting(context, "missileAcceleration", 0.2),
+      maxStartGrenades: readIntegerSetting(context, "maxStartGrenades", 20),
+      maxStartMissiles: readIntegerSetting(context, "maxStartMissiles", 10),
+      maxStartBoosts: readIntegerSetting(context, "maxStartBoosts", 5),
+      defaultLives: readIntegerSetting(context, "defaultLives", 3)
+    },
     nodes
   };
 }
@@ -144,6 +170,7 @@ async function collectSceneFromFile(input: {
   environment: { skyColors: string[]; groundColor: string };
   nodes: SceneNode[];
   context: ScriptContext;
+  state: ParseState;
   visited?: Set<string>;
 }): Promise<void> {
   const visited = input.visited ?? new Set<string>();
@@ -188,7 +215,7 @@ async function collectSceneFromFile(input: {
       continue;
     }
 
-    const node = await toSceneNode(tag, input.packDir, input.levelsRoot, input.context, input.nodes.length);
+    const node = await toSceneNode(tag, input.packDir, input.levelsRoot, input.context, input.state, input.nodes.length);
     if (node) {
       input.nodes.push(node);
     }
@@ -200,6 +227,7 @@ async function toSceneNode(
   packDir: string,
   levelsRoot: string,
   context: ScriptContext,
+  state: ParseState,
   index: number
 ): Promise<SceneNode | null> {
   const evaluated = Object.fromEntries(
@@ -229,17 +257,36 @@ async function toSceneNode(
   } satisfies Partial<SceneNode>;
 
   switch (tag.name) {
-    case "Wall":
-    case "WallDoor":
+    case "Wall": {
+      const wallTemplate = createWallTemplate(evaluated, context);
+      state.lastWallTemplate = wallTemplate;
       return {
         ...common,
-        type: tag.name === "WallDoor" ? "door" : "wall",
-        size: {
-          width: clampSize(toNumber(evaluated.w, 1)),
-          height: clampSize(toNumber(evaluated.h, toNumber(context.wallHeight, 1))),
-          depth: clampSize(toNumber(evaluated.d, 1))
-        }
+        type: "wall",
+        position: wallTemplate.position,
+        rotation: { pitch: 0, yaw: 0, roll: 0 },
+        size: wallTemplate.size,
+        localBounds: wallTemplate.localBounds
       };
+    }
+
+    case "WallDoor": {
+      const wallTemplate = createWallTemplate(evaluated, context);
+      state.lastWallTemplate = wallTemplate;
+      const consumedTemplate = takeLastWallTemplate(state);
+      if (!consumedTemplate) {
+        return null;
+      }
+
+      return {
+        ...common,
+        type: "door",
+        position: consumedTemplate.position,
+        rotation: { pitch: 0, yaw: 0, roll: 0 },
+        size: consumedTemplate.size,
+        localBounds: consumedTemplate.localBounds
+      };
+    }
 
     case "Ramp":
       return {
@@ -265,7 +312,7 @@ async function toSceneNode(
         type: "teleporter",
         size: { width: 2.5, height: 0.25, depth: 2.5 },
         scale: toNumber(evaluated.scale, 1),
-        ...(await resolveShapeDescriptor(asString(evaluated.shape), packDir, levelsRoot, context))
+        ...(await resolveShapeDescriptor(asShapeToken(evaluated.shape, tag.attributes.shape), packDir, levelsRoot, context))
       };
 
     case "Goody":
@@ -274,31 +321,100 @@ async function toSceneNode(
         type: "goody",
         size: { width: 1.25, height: 1.25, depth: 1.25 },
         scale: toNumber(evaluated.scale, 1),
-        ...(await resolveShapeDescriptor(asString(evaluated.shape), packDir, levelsRoot, context))
+        ...(await resolveShapeDescriptor(asShapeToken(evaluated.shape, tag.attributes.shape), packDir, levelsRoot, context))
       };
+
+    case "WallSolid": {
+      const wallTemplate = createWallTemplate(evaluated, context);
+      state.lastWallTemplate = wallTemplate;
+      const consumedTemplate = takeLastWallTemplate(state);
+      if (!consumedTemplate) {
+        return null;
+      }
+
+      return {
+        ...common,
+        type: "shape",
+        position: consumedTemplate.position,
+        rotation: { pitch: 0, yaw: 0, roll: 0 },
+        size: consumedTemplate.size,
+        localBounds: consumedTemplate.localBounds
+      };
+    }
 
     case "Solid":
     case "FreeSolid":
     case "Hologram":
-    case "Door":
+    case "Door": {
+      const rawShape = asShapeToken(evaluated.shape, tag.attributes.shape);
+      const scale = toNumber(evaluated.scale, 1);
+      const shapeDescriptor = await resolveShapeDescriptor(
+        rawShape,
+        packDir,
+        levelsRoot,
+        context
+      );
+      const wallTemplate = resolveWallBackedTemplate(tag.name, rawShape, shapeDescriptor, evaluated, context, state);
+      if (wallTemplate) {
+        return {
+          ...common,
+          type: tag.name === "Door" ? "door" : "shape",
+          position: wallTemplate.position,
+          rotation: { pitch: 0, yaw: 0, roll: 0 },
+          size: wallTemplate.size,
+          localBounds: wallTemplate.localBounds,
+          scale
+        };
+      }
+      if (tag.name === "FreeSolid" && shapeDescriptor.shapeId === 0) {
+        return null;
+      }
+      const localBounds = shapeDescriptor.localBounds
+        ? scaleLocalBounds(shapeDescriptor.localBounds, scale)
+        : createFallbackShapeBounds(evaluated, tag.name);
+
       return {
         ...common,
         type: tag.name === "Door" ? "door" : "shape",
-        size: { width: 2, height: 2, depth: 2 },
-        scale: toNumber(evaluated.scale, 1),
-        ...(await resolveShapeDescriptor(asString(evaluated.shape), packDir, levelsRoot, context))
+        size: boundsToSize(localBounds),
+        scale,
+        ...shapeDescriptor,
+        localBounds
       };
+    }
 
     case "Field":
-      return {
-        ...common,
-        type: "field",
-        size: {
-          width: clampSize(toNumber(evaluated.w, 1)),
-          height: clampSize(Math.max(toNumber(evaluated.deltaY, toNumber(evaluated.h, 2)), 0.1)),
-          depth: clampSize(toNumber(evaluated.d, 1))
+      {
+        const rawShape = asShapeToken(evaluated.shape, tag.attributes.shape);
+        const shapeDescriptor = await resolveShapeDescriptor(rawShape, packDir, levelsRoot, context);
+        const wallTemplate = resolveWallBackedTemplate(tag.name, rawShape, shapeDescriptor, evaluated, context, state);
+        if (wallTemplate) {
+          return {
+            ...common,
+            type: "field",
+            position: wallTemplate.position,
+            rotation: { pitch: 0, yaw: 0, roll: 0 },
+            size: wallTemplate.size,
+            localBounds: wallTemplate.localBounds
+          };
         }
-      };
+        if (shapeDescriptor.shapeId === 0) {
+          return null;
+        }
+
+        return {
+          ...common,
+          type: "field",
+          size: {
+            width: clampSize(toNumber(evaluated.w, 1)),
+            height: clampSize(Math.max(toNumber(evaluated.deltaY, toNumber(evaluated.h, 2)), 0.1)),
+            depth: clampSize(toNumber(evaluated.d, 1))
+          },
+          ...(shapeDescriptor.shapeAssetUrl || shapeDescriptor.shapeId !== undefined || shapeDescriptor.shapeKey
+            ? shapeDescriptor
+            : {})
+        };
+      }
 
     case "Marker":
       if (isAdBillboardMarker(evaluated)) {
@@ -330,21 +446,22 @@ async function resolveShapeDescriptor(
   packDir: string,
   levelsRoot: string,
   context: ScriptContext
-): Promise<Pick<SceneNode, "shapeAssetUrl" | "shapeId" | "shapeKey">> {
+): Promise<Pick<SceneNode, "shapeAssetUrl" | "shapeId" | "shapeKey" | "localBounds">> {
   if (!rawShape) {
     return {};
   }
 
   const resolved = resolveAttributeValue(rawShape, context);
   const shapeKey = typeof resolved === "string" ? resolved : rawShape;
-  const shapeId = typeof resolved === "number" ? resolved : parseNumericShape(rawShape);
+  const shapeId = typeof resolved === "number" ? resolved : parseNumericShape(typeof resolved === "string" ? resolved : rawShape);
 
   if (shapeId !== null) {
-    const shapeAssetUrl = await resolveShapeAssetUrl(shapeId, packDir, levelsRoot);
+    const resolvedAsset = await resolveShapeAsset(shapeId, packDir, levelsRoot);
     return {
-      shapeAssetUrl,
+      shapeAssetUrl: resolvedAsset?.assetUrl,
       shapeId,
-      shapeKey: rawShape
+      shapeKey: rawShape,
+      localBounds: resolvedAsset ? await readShapeBounds(resolvedAsset.filePath) : undefined
     };
   }
 
@@ -353,15 +470,36 @@ async function resolveShapeDescriptor(
   };
 }
 
-async function resolveShapeAssetUrl(shapeId: number, packDir: string, levelsRoot: string): Promise<string | undefined> {
+async function resolveShapeAsset(
+  shapeId: number,
+  packDir: string,
+  levelsRoot: string
+): Promise<{ assetUrl: string; filePath: string } | undefined> {
   const localPackFile = path.join(packDir, "bsps", `${shapeId}.json`);
   if (await pathExists(localPackFile)) {
-    return toApiContentPath(localPackFile, levelsRoot);
+    return {
+      assetUrl: toApiContentPath(localPackFile, levelsRoot),
+      filePath: localPackFile
+    };
   }
 
-  const rootShapeFile = path.join(path.dirname(levelsRoot), "rsrc", "bsps", `${shapeId}.json`);
+  const workspaceRoot = path.dirname(levelsRoot);
+  const rootShapeFile = path.join(workspaceRoot, "rsrc", "bsps", `${shapeId}.json`);
   if (await pathExists(rootShapeFile)) {
-    return toApiContentPath(rootShapeFile, levelsRoot);
+    return {
+      assetUrl: toApiContentPath(rootShapeFile, levelsRoot),
+      filePath: rootShapeFile
+    };
+  }
+
+  for (const directory of await listSupplementalResourceBspDirectories(workspaceRoot)) {
+    const nestedShapeFile = path.join(directory, `${shapeId}.json`);
+    if (await pathExists(nestedShapeFile)) {
+      return {
+        assetUrl: toApiContentPath(nestedShapeFile, levelsRoot),
+        filePath: nestedShapeFile
+      };
+    }
   }
 
   return undefined;
@@ -381,13 +519,28 @@ async function buildCatalogMap(levelsRoot: string): Promise<Map<string, LevelCat
   return catalog;
 }
 
-async function loadPackScriptContext(packDir: string): Promise<ScriptContext> {
+const supplementalBspDirectoryCache = new Map<string, Promise<string[]>>();
+const shapeBoundsCache = new Map<string, Promise<SceneLocalBounds | undefined>>();
+
+async function loadPackScriptContext(levelsRoot: string, packDir: string): Promise<ScriptContext> {
   const context: ScriptContext = {};
-  const scriptPath = path.join(packDir, "default.avarascript");
-  if (!(await pathExists(scriptPath))) {
-    return context;
+  const workspaceRoot = path.dirname(levelsRoot);
+  const scriptPaths = [
+    path.join(workspaceRoot, "rsrc", "default.avarascript"),
+    path.join(packDir, "default.avarascript")
+  ];
+
+  for (const scriptPath of scriptPaths) {
+    if (!(await pathExists(scriptPath))) {
+      continue;
+    }
+    await mergeScriptContextFromFile(scriptPath, context);
   }
 
+  return context;
+}
+
+async function mergeScriptContextFromFile(scriptPath: string, context: ScriptContext): Promise<void> {
   const script = await fs.readFile(scriptPath, "utf8");
   for (const rawLine of script.split("\n")) {
     const line = rawLine.replace(/\/\/.*$/, "").trim();
@@ -395,15 +548,68 @@ async function loadPackScriptContext(packDir: string): Promise<ScriptContext> {
       continue;
     }
 
-    const [left, right] = line.split("=").map((part) => part.trim());
+    const separatorIndex = line.indexOf("=");
+    const left = line.slice(0, separatorIndex).trim();
+    const right = line.slice(separatorIndex + 1).trim();
     if (!left || !right) {
       continue;
     }
 
     context[left] = resolveAttributeValue(right, context);
   }
+}
 
-  return context;
+async function listSupplementalResourceBspDirectories(workspaceRoot: string): Promise<string[]> {
+  const cached = supplementalBspDirectoryCache.get(workspaceRoot);
+  if (cached) {
+    return cached;
+  }
+
+  const pending = (async () => {
+    const rsrcRoot = path.join(workspaceRoot, "rsrc");
+    const entries = await readdirSafe(rsrcRoot);
+    const directories: string[] = [];
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+
+      const bspDirectory = path.join(rsrcRoot, entry.name, "bsps");
+      if (await pathExists(bspDirectory)) {
+        directories.push(bspDirectory);
+      }
+    }
+
+    return directories;
+  })();
+
+  supplementalBspDirectoryCache.set(workspaceRoot, pending);
+  return pending;
+}
+
+async function readShapeBounds(filePath: string): Promise<SceneLocalBounds | undefined> {
+  const cached = shapeBoundsCache.get(filePath);
+  if (cached) {
+    return cached;
+  }
+
+  const pending = (async () => {
+    const asset = await readJsonSafe<ParsedBspAsset>(filePath);
+    const min = asset.bounds?.min;
+    const max = asset.bounds?.max;
+    if (!min || !max || min.length !== 3 || max.length !== 3) {
+      return undefined;
+    }
+
+    return {
+      min: { x: min[0], y: min[1], z: min[2] },
+      max: { x: max[0], y: max[1], z: max[2] }
+    };
+  })();
+
+  shapeBoundsCache.set(filePath, pending);
+  return pending;
 }
 
 function extractTags(xml: string): ParsedTag[] {
@@ -494,7 +700,7 @@ function resolveAttributeValue(value: string, context: ScriptContext): number | 
     return false;
   }
 
-  if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+  if (/^-?(?:\d+(\.\d+)?|\.\d+)$/.test(trimmed)) {
     return Number(trimmed);
   }
 
@@ -601,12 +807,156 @@ function toNumber(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
+function readNumericSetting(context: ScriptContext, key: string, fallback: number): number {
+  const value = context[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function readIntegerSetting(context: ScriptContext, key: string, fallback: number): number {
+  return Math.round(readNumericSetting(context, key, fallback));
+}
+
 function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+function asShapeToken(value: unknown, fallback?: string): string | undefined {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return fallback ?? String(value);
+  }
+  return fallback;
+}
+
 function clampSize(value: number): number {
   return Math.max(Math.abs(value), 0.1);
+}
+
+function resolveWallBackedTemplate(
+  actorClass: string,
+  rawShape: string | undefined,
+  shapeDescriptor: Pick<SceneNode, "shapeAssetUrl" | "shapeId" | "shapeKey" | "localBounds">,
+  evaluated: Record<string, unknown>,
+  context: ScriptContext,
+  state: ParseState
+): WallTemplate | undefined {
+  if (actorClass === "Door" || actorClass === "Solid" || actorClass === "Hologram") {
+    return undefined;
+  }
+
+  const shapeMissing = rawShape === undefined || rawShape === "";
+  if (shapeMissing && (actorClass === "FreeSolid" || actorClass === "Field")) {
+    const template = createWallTemplate(evaluated, context);
+    state.lastWallTemplate = template;
+    return takeLastWallTemplate(state);
+  }
+
+  if (shapeDescriptor.shapeId === 0 && (actorClass === "FreeSolid" || actorClass === "Field")) {
+    return takeLastWallTemplate(state);
+  }
+
+  return undefined;
+}
+
+function takeLastWallTemplate(state: ParseState): WallTemplate | undefined {
+  const template = state.lastWallTemplate;
+  state.lastWallTemplate = undefined;
+  return template;
+}
+
+function createWallTemplate(attributes: Record<string, unknown>, context: ScriptContext): WallTemplate {
+  const width = clampSize(toNumber(attributes.w, 1));
+  const depth = clampSize(toNumber(attributes.d, 1));
+  const height = resolveWallHeight(attributes, context);
+  const baseHeight = readNumericSetting(context, "baseHeight", 0);
+  const wallAltitude = readNumericSetting(context, "wallAltitude", 0);
+  const baseY = baseHeight + wallAltitude + toNumber(attributes.y, 0);
+  const centerY = baseY + height / 2;
+
+  return {
+    position: {
+      x: toNumber(attributes.x, 0),
+      y: centerY,
+      z: toNumber(attributes.z, 0)
+    },
+    baseY,
+    size: {
+      width,
+      height,
+      depth
+    },
+    localBounds: {
+      min: {
+        x: -width / 2,
+        y: -height / 2,
+        z: -depth / 2
+      },
+      max: {
+        x: width / 2,
+        y: height / 2,
+        z: depth / 2
+      }
+    }
+  };
+}
+
+function resolveWallHeight(attributes: Record<string, unknown>, context: ScriptContext): number {
+  const explicitHeight = typeof attributes.h === "number" && Number.isFinite(attributes.h)
+    ? Math.abs(attributes.h)
+    : undefined;
+
+  if (explicitHeight && explicitHeight > 0) {
+    return explicitHeight;
+  }
+
+  const scriptedHeight = Math.abs(readNumericSetting(context, "wallHeight", 1));
+  return scriptedHeight;
+}
+
+function scaleLocalBounds(bounds: SceneLocalBounds, scale: number): SceneLocalBounds {
+  const factor = Number.isFinite(scale) ? scale : 1;
+  return {
+    min: {
+      x: bounds.min.x * factor,
+      y: bounds.min.y * factor,
+      z: bounds.min.z * factor
+    },
+    max: {
+      x: bounds.max.x * factor,
+      y: bounds.max.y * factor,
+      z: bounds.max.z * factor
+    }
+  };
+}
+
+function boundsToSize(bounds: SceneLocalBounds): { width: number; height: number; depth: number } {
+  return {
+    width: clampSize(bounds.max.x - bounds.min.x),
+    height: clampSize(bounds.max.y - bounds.min.y),
+    depth: clampSize(bounds.max.z - bounds.min.z)
+  };
+}
+
+function createFallbackShapeBounds(attributes: Record<string, unknown>, actorClass: string): SceneLocalBounds {
+  const width = clampSize(toNumber(attributes.w, 2));
+  const height = clampSize(toNumber(attributes.h, 2));
+  const depth = clampSize(toNumber(attributes.d, 2));
+  const centered = actorClass === "Hologram";
+
+  return {
+    min: {
+      x: -width / 2,
+      y: centered ? -height / 2 : 0,
+      z: -depth / 2
+    },
+    max: {
+      x: width / 2,
+      y: centered ? height / 2 : height,
+      z: depth / 2
+    }
+  };
 }
 
 function evaluateArithmeticExpression(expression: string, context: ScriptContext): number {

@@ -88,6 +88,11 @@ export interface SceneEnvironment {
   groundColor: string;
 }
 
+export interface SceneLocalBounds {
+  min: { x: number; y: number; z: number };
+  max: { x: number; y: number; z: number };
+}
+
 export type SceneNodeType =
   | "wall"
   | "ramp"
@@ -108,6 +113,7 @@ export interface SceneNode {
   size?: { width: number; height: number; depth: number };
   rotation?: { pitch: number; yaw: number; roll: number };
   scale?: number;
+  localBounds?: SceneLocalBounds;
   color?: string;
   accentColor?: string;
   shapeId?: number;
@@ -123,7 +129,22 @@ export interface LevelScene {
   packSlug: string;
   entryPath: string;
   environment: SceneEnvironment;
+  settings: LevelSimulationSettings;
   nodes: SceneNode[];
+}
+
+export interface LevelSimulationSettings {
+  gravity: number;
+  defaultTraction: number;
+  defaultFriction: number;
+  grenadePower: number;
+  missilePower: number;
+  missileTurnRate: number;
+  missileAcceleration: number;
+  maxStartGrenades: number;
+  maxStartMissiles: number;
+  maxStartBoosts: number;
+  defaultLives: number;
 }
 
 export interface RoomSummary {

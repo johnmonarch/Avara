@@ -33,8 +33,15 @@ interface BspShapeData {
   polys: Array<{ normal: number; tris: number[] }>;
 }
 
-const shapeCache = new Map<string, THREE.BufferGeometry>();
+const shapeCache = new Map<string, Promise<THREE.BufferGeometry>>();
 const billboardTextureCache = new Map<string, Promise<THREE.Texture>>();
+const ROOT_BSP_CONTENT_PREFIX = "/content/rsrc/bsps";
+const LIVE_ASSET_URLS = {
+  hector: `${ROOT_BSP_CONTENT_PREFIX}/102.json`,
+  plasma: `${ROOT_BSP_CONTENT_PREFIX}/203.json`,
+  missile: `${ROOT_BSP_CONTENT_PREFIX}/802.json`,
+  grenade: `${ROOT_BSP_CONTENT_PREFIX}/820.json`
+} as const;
 
 export default function LevelViewport({
   scene,
@@ -611,27 +618,41 @@ async function loadBspGeometry(url: string): Promise<THREE.BufferGeometry> {
     return cached;
   }
 
-  const response = await fetch(url);
-  const data = (await response.json()) as BspShapeData;
-  const positions: number[] = [];
-  const normals: number[] = [];
-
-  for (const poly of data.polys) {
-    for (let index = 0; index < poly.tris.length; index += 1) {
-      const point = data.points[poly.tris[index]];
-      const normal = data.normals[poly.normal] ?? [0, 1, 0];
-      positions.push(point[0], point[1], point[2]);
-      normals.push(normal[0], normal[1], normal[2]);
+  const pending = (async () => {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to load BSP ${url}: ${response.status}`);
     }
-  }
 
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-  geometry.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
-  geometry.computeBoundingSphere();
-  geometry.computeBoundingBox();
-  shapeCache.set(url, geometry);
-  return geometry;
+    const data = (await response.json()) as BspShapeData;
+    const positions: number[] = [];
+    const normals: number[] = [];
+
+    for (const poly of data.polys) {
+      for (let index = 0; index < poly.tris.length; index += 1) {
+        const point = data.points[poly.tris[index]];
+        const normal = data.normals[poly.normal] ?? [0, 1, 0];
+        positions.push(point[0], point[1], point[2]);
+        normals.push(normal[0], normal[1], normal[2]);
+      }
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
+    geometry.computeBoundingSphere();
+    geometry.computeBoundingBox();
+    return geometry;
+  })();
+
+  shapeCache.set(url, pending);
+
+  try {
+    return await pending;
+  } catch (error) {
+    shapeCache.delete(url);
+    throw error;
+  }
 }
 
 function inferColor(node: SceneNode): string {
@@ -670,7 +691,7 @@ function syncPlayerMeshes(
   for (const player of players) {
     let object = cache.get(player.id);
     if (!object) {
-      object = createPlayerMarker(player.id === localPlayerId);
+      object = createPlayerMarker(player, player.id === localPlayerId);
       cache.set(player.id, object);
       layer.add(object);
     }
@@ -698,7 +719,21 @@ function syncPlayerMeshes(
   }
 }
 
-function createPlayerMarker(isLocal: boolean): THREE.Object3D {
+function createPlayerMarker(player: SnapshotPlayerState, isLocal: boolean): THREE.Object3D {
+  return createDynamicAssetMarker({
+    shapeAssetUrl: player.shapeAssetUrl ?? LIVE_ASSET_URLS.hector,
+    scale: player.scale ?? 1,
+    grounded: true,
+    material: new THREE.MeshStandardMaterial({
+      color: player.color ?? (isLocal ? "#ffd879" : "#7dbbff"),
+      metalness: 0.16,
+      roughness: 0.62
+    }),
+    fallback: () => createFallbackPlayerMarker(isLocal)
+  });
+}
+
+function createFallbackPlayerMarker(isLocal: boolean): THREE.Object3D {
   const root = new THREE.Group();
   const body = new THREE.Mesh(
     new THREE.CylinderGeometry(1.15, 1.45, 2.4, 10),
@@ -737,12 +772,13 @@ function syncProjectileMeshes(
   for (const projectile of projectiles) {
     let object = cache.get(projectile.id);
     if (!object) {
-      object = createProjectileMarker(projectile.kind);
+      object = createProjectileMarker(projectile);
       cache.set(projectile.id, object);
       layer.add(object);
     }
 
     object.position.set(projectile.x, projectile.y, projectile.z);
+    object.rotation.set(-(projectile.pitch ?? 0), projectile.yaw ?? 0, projectile.roll ?? 0);
   }
 
   for (const [projectileId, object] of cache.entries()) {
@@ -753,7 +789,45 @@ function syncProjectileMeshes(
   }
 }
 
-function createProjectileMarker(kind: SnapshotProjectileState["kind"]): THREE.Object3D {
+function createProjectileMarker(projectile: SnapshotProjectileState): THREE.Object3D {
+  const shapeAssetUrl = projectile.shapeAssetUrl
+    ?? (projectile.kind === "plasma"
+      ? LIVE_ASSET_URLS.plasma
+      : projectile.kind === "missile"
+        ? LIVE_ASSET_URLS.missile
+        : LIVE_ASSET_URLS.grenade);
+  const color = projectile.kind === "plasma"
+    ? "#ffe38f"
+    : projectile.kind === "missile"
+      ? "#ff9b67"
+      : "#79ffad";
+
+  return createDynamicAssetMarker({
+    shapeAssetUrl,
+    scale: projectile.scale ?? 1,
+    material: new THREE.MeshStandardMaterial({
+      color,
+      emissive: color,
+      emissiveIntensity: 0.22,
+      metalness: 0.08,
+      roughness: 0.46
+    }),
+    fallback: () => createFallbackProjectileMarker(projectile.kind)
+  });
+}
+
+function createFallbackProjectileMarker(kind: SnapshotProjectileState["kind"]): THREE.Object3D {
+  if (kind === "plasma") {
+    return new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.18, 0.9, 6, 12),
+      new THREE.MeshStandardMaterial({
+        color: "#ffe38f",
+        emissive: "#ffd24b",
+        emissiveIntensity: 0.48
+      })
+    );
+  }
+
   return new THREE.Mesh(
     new THREE.SphereGeometry(kind === "missile" ? 0.4 : 0.55, 12, 12),
     new THREE.MeshStandardMaterial({
@@ -774,12 +848,12 @@ function syncPickupMeshes(
   for (const pickup of pickups) {
     let object = cache.get(pickup.id);
     if (!object) {
-      object = createPickupMarker(pickup.kind);
+      object = createPickupMarker(pickup);
       cache.set(pickup.id, object);
       layer.add(object);
     }
 
-    object.position.set(pickup.x, pickup.y + 0.8, pickup.z);
+    object.position.set(pickup.x, pickup.y, pickup.z);
     object.visible = pickup.available;
   }
 
@@ -791,7 +865,23 @@ function syncPickupMeshes(
   }
 }
 
-function createPickupMarker(kind: SnapshotPickupState["kind"]): THREE.Object3D {
+function createPickupMarker(pickup: SnapshotPickupState): THREE.Object3D {
+  const color = pickup.color ?? (pickup.kind === "missiles" ? "#ff8e74" : pickup.kind === "grenades" ? "#7effd0" : "#ffe66d");
+  return createDynamicAssetMarker({
+    shapeAssetUrl: pickup.shapeAssetUrl,
+    scale: pickup.scale ?? 1,
+    material: new THREE.MeshStandardMaterial({
+      color,
+      emissive: pickup.accentColor ?? color,
+      emissiveIntensity: 0.18,
+      metalness: 0.08,
+      roughness: 0.35
+    }),
+    fallback: () => createFallbackPickupMarker(pickup.kind)
+  });
+}
+
+function createFallbackPickupMarker(kind: SnapshotPickupState["kind"]): THREE.Object3D {
   const color = kind === "missiles" ? "#ff8e74" : kind === "grenades" ? "#7effd0" : "#ffe66d";
   return new THREE.Mesh(
     new THREE.OctahedronGeometry(0.9, 0),
@@ -803,6 +893,40 @@ function createPickupMarker(kind: SnapshotPickupState["kind"]): THREE.Object3D {
       roughness: 0.35
     })
   );
+}
+
+function createDynamicAssetMarker(input: {
+  shapeAssetUrl?: string;
+  scale?: number;
+  grounded?: boolean;
+  material: THREE.MeshStandardMaterial;
+  fallback: () => THREE.Object3D;
+}): THREE.Object3D {
+  const root = new THREE.Group();
+  const fallback = input.fallback();
+  root.add(fallback);
+
+  if (!input.shapeAssetUrl) {
+    return root;
+  }
+
+  void loadBspGeometry(input.shapeAssetUrl)
+    .then((geometry) => {
+      root.clear();
+      const mesh = new THREE.Mesh(geometry, input.material);
+      const scale = input.scale ?? 1;
+      mesh.scale.setScalar(scale);
+      if (input.grounded && geometry.boundingBox) {
+        mesh.position.y = -geometry.boundingBox.min.y * scale;
+      }
+      root.add(mesh);
+    })
+    .catch(() => {
+      root.clear();
+      root.add(fallback);
+    });
+
+  return root;
 }
 
 function normalizeAngle(value: number): number {

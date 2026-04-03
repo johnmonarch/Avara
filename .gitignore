@@ -28,3 +28,4 @@ coverage
 *.tsbuildinfo
 .avara-storage/
 levels/_uploaded-*/
+packages/native-core/build/
