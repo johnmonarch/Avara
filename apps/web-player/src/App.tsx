@@ -896,7 +896,7 @@ export function App() {
                     Disconnect
                   </button>
                 ) : null}
-                {connectedRoom?.id === selectedRoom?.id && identity?.id === selectedRoom.ownerUserId ? (
+                {selectedRoom && connectedRoom?.id === selectedRoom.id && identity?.id === selectedRoom.ownerUserId ? (
                   <button className="secondary-button" disabled={busy} onClick={handleEndRoom}>
                     End room
                   </button>
