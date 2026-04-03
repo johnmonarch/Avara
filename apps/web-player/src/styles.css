@@ -26,7 +26,8 @@ body {
     linear-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px),
     linear-gradient(180deg, #c9c9c9 0%, #ababab 100%);
   background-size: 4px 4px, 4px 4px, auto;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 button,
@@ -41,18 +42,15 @@ a {
 
 .app-shell {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(260px, 310px);
-  gap: 12px;
-  height: 100%;
-  min-height: 0;
-  padding: 12px;
-  overflow: hidden;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  min-height: calc(100vh - 30px);
+  padding: 12px 16px 20px;
 }
 
 .desktop-shell {
-  height: 100vh;
+  min-height: 100vh;
   padding-top: 30px;
-  overflow: hidden;
 }
 
 .menu-bar {
@@ -104,8 +102,18 @@ a {
 }
 
 .panel-right {
-  overflow: auto;
-  padding-right: 2px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  width: min(100%, 1680px);
+  margin: 0 auto;
+  overflow: visible;
+  padding-right: 0;
+  align-items: start;
+}
+
+.panel-right > :first-child {
+  grid-column: span 2;
 }
 
 .card,
@@ -153,11 +161,10 @@ a {
 }
 
 .main-stage {
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: 12px;
-  min-height: 0;
-  overflow: hidden;
+  align-items: start;
+  justify-items: center;
 }
 
 .hero-bar {
@@ -165,6 +172,7 @@ a {
   grid-template-columns: minmax(0, 1fr) minmax(320px, 520px);
   align-items: start;
   gap: 12px;
+  width: min(100%, 1680px);
 }
 
 .hero-heading {
@@ -173,6 +181,7 @@ a {
 
 .hero-copy {
   margin: 0;
+  max-width: 58ch;
 }
 
 .hero-status {
@@ -193,8 +202,10 @@ a {
 
 .viewport-shell {
   position: relative;
-  flex: 1;
-  min-height: clamp(360px, 52vh, 680px);
+  width: min(100%, 1680px);
+  aspect-ratio: 16 / 9;
+  min-height: clamp(420px, 64vh, 900px);
+  max-height: calc(100vh - 220px);
   overflow: hidden;
   border-radius: 0;
   background:
@@ -212,7 +223,7 @@ a {
 .viewport-loading {
   display: grid;
   place-items: center;
-  min-height: clamp(360px, 52vh, 680px);
+  min-height: clamp(420px, 64vh, 900px);
 }
 
 .viewport-empty {
@@ -446,6 +457,7 @@ a {
   gap: 16px;
   padding: 12px;
   border-radius: 0;
+  width: min(100%, 1680px);
 }
 
 .start-card {
@@ -480,14 +492,18 @@ a {
 
 .control-dock {
   display: grid;
-  grid-template-columns: minmax(320px, 1.35fr) minmax(220px, 0.9fr) minmax(240px, 1fr);
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.9fr);
   gap: 12px;
-  flex: 0 0 auto;
+  width: min(100%, 1680px);
 }
 
 .dock-card {
   display: grid;
   align-content: start;
+}
+
+.settings-drawer {
+  grid-column: 1 / -1;
 }
 
 .launch-console-grid {
@@ -623,12 +639,12 @@ a {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 10px;
-  flex: 0 0 auto;
+  width: min(100%, 1680px);
 }
 
 .inline-error-card {
   padding: 10px 12px;
-  flex: 0 0 auto;
+  width: min(100%, 1680px);
 }
 
 .billboard-list {
@@ -848,6 +864,8 @@ a {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  max-height: 260px;
+  overflow: auto;
 }
 
 .empty-state-card,
@@ -935,7 +953,6 @@ a {
   }
 
   .desktop-shell {
-    height: auto;
     min-height: 100vh;
     padding-top: 72px;
     overflow: visible;
@@ -943,7 +960,6 @@ a {
 
   .app-shell {
     grid-template-columns: 1fr;
-    height: auto;
     overflow: visible;
   }
 
@@ -966,14 +982,29 @@ a {
     grid-template-columns: 1fr;
   }
 
+  .panel-right {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .panel-right > :first-child,
+  .settings-drawer {
+    grid-column: auto;
+  }
+
   .launch-console-grid,
   .launch-forms {
     grid-template-columns: 1fr;
   }
 
+  .viewport-shell {
+    min-height: clamp(320px, 48vh, 620px);
+    max-height: none;
+  }
+
   .viewport-canvas,
-  .viewport-empty {
-    min-height: 420px;
+  .viewport-empty,
+  .viewport-loading {
+    min-height: 320px;
   }
 
   .combat-hud {
@@ -1023,5 +1054,15 @@ a {
 
   .compact-guide-list {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .panel-right {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-status {
+    grid-template-columns: 1fr 1fr;
   }
 }
