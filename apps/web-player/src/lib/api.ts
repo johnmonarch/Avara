@@ -70,21 +70,21 @@ export async function fetchRooms(): Promise<RoomSummary[]> {
   const payload = await apiRequest<{ rooms: RoomSummary[] }>("/rooms", {
     headers: identityHeaders()
   });
-  return payload.rooms;
+  return payload.rooms.map(normalizeRoomUrl);
 }
 
 export async function fetchRoom(roomId: string): Promise<RoomDetail> {
   const payload = await apiRequest<{ room: RoomDetail }>(`/rooms/${encodeURIComponent(roomId)}`, {
     headers: identityHeaders()
   });
-  return payload.room;
+  return normalizeRoomUrl(payload.room);
 }
 
 export async function fetchRoomByInvite(inviteCode: string): Promise<RoomDetail> {
   const payload = await apiRequest<{ room: RoomDetail }>(`/rooms/by-invite/${encodeURIComponent(inviteCode)}`, {
     headers: identityHeaders()
   });
-  return payload.room;
+  return normalizeRoomUrl(payload.room);
 }
 
 export async function fetchLevelScene(levelId: string): Promise<{ scene: LevelScene; billboards: LevelBillboardAssignment[] }> {
@@ -128,7 +128,7 @@ export async function createRoom(levelId: string, name: string, visibility: Visi
     headers: identityHeaders()
   });
 
-  return payload.room;
+  return normalizeRoomUrl(payload.room);
 }
 
 export async function joinRoom(roomId: string): Promise<RoomDetail> {
@@ -138,7 +138,7 @@ export async function joinRoom(roomId: string): Promise<RoomDetail> {
     headers: identityHeaders()
   });
 
-  return payload.room;
+  return normalizeRoomUrl(payload.room);
 }
 
 export async function joinRoomByInvite(inviteCode: string): Promise<RoomDetail> {
@@ -148,7 +148,7 @@ export async function joinRoomByInvite(inviteCode: string): Promise<RoomDetail> 
     headers: identityHeaders()
   });
 
-  return payload.room;
+  return normalizeRoomUrl(payload.room);
 }
 
 export async function leaveRoom(roomId: string): Promise<RoomDetail> {
@@ -158,7 +158,7 @@ export async function leaveRoom(roomId: string): Promise<RoomDetail> {
     headers: identityHeaders()
   });
 
-  return payload.room;
+  return normalizeRoomUrl(payload.room);
 }
 
 export async function heartbeatRoom(roomId: string): Promise<RoomSummary> {
@@ -168,7 +168,7 @@ export async function heartbeatRoom(roomId: string): Promise<RoomSummary> {
     headers: identityHeaders()
   });
 
-  return payload.room;
+  return normalizeRoomUrl(payload.room);
 }
 
 export async function endRoom(roomId: string): Promise<RoomDetail> {
@@ -178,7 +178,7 @@ export async function endRoom(roomId: string): Promise<RoomDetail> {
     headers: identityHeaders()
   });
 
-  return payload.room;
+  return normalizeRoomUrl(payload.room);
 }
 
 export async function bootstrapPrototypeRoom(room: Pick<RoomSummary, "id" | "levelId" | "playerCap" | "gameServerUrl">): Promise<void> {
@@ -267,7 +267,8 @@ async function apiRequest<T>(pathname: string, init: RequestInit = {}): Promise<
 }
 
 async function gameRequest<T>(baseUrl: string | undefined, pathname: string, init: RequestInit = {}): Promise<T> {
-  return jsonRequest<T>(`${baseUrl ?? GAME_SERVER_URL}${pathname}`, init);
+  const resolvedBaseUrl = resolveServiceUrl(baseUrl, "game", "http://localhost:8091");
+  return jsonRequest<T>(`${resolvedBaseUrl}${pathname}`, init);
 }
 
 async function jsonRequest<T>(url: string, init: RequestInit = {}): Promise<T> {
@@ -338,6 +339,13 @@ function resolveServiceUrl(configuredUrl: string | undefined, service: "api" | "
   }
 
   return configuredUrl ?? localFallback;
+}
+
+function normalizeRoomUrl<T extends { gameServerUrl: string }>(room: T): T {
+  return {
+    ...room,
+    gameServerUrl: resolveServiceUrl(room.gameServerUrl, "game", "http://localhost:8091")
+  };
 }
 
 function getBaseHost(hostname: string): string {
