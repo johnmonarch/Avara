@@ -42,9 +42,16 @@ export interface SnapshotPlayerState {
   x: number;
   y: number;
   z: number;
+  vx?: number;
+  vy?: number;
+  vz?: number;
   bodyYaw: number;
   turretYaw: number;
   turretPitch: number;
+  leftMotor?: number;
+  rightMotor?: number;
+  crouch?: number;
+  stance?: number;
   health: number;
   alive: boolean;
   kills: number;

@@ -42,10 +42,18 @@ const billboardTextureCache = new Map<string, Promise<THREE.Texture>>();
 const ROOT_BSP_CONTENT_PREFIX = "/content/rsrc/bsps";
 const LIVE_ASSET_URLS = {
   hector: `${ROOT_BSP_CONTENT_PREFIX}/102.json`,
+  hectorHead: `${ROOT_BSP_CONTENT_PREFIX}/210.json`,
+  hectorLegHigh: `${ROOT_BSP_CONTENT_PREFIX}/211.json`,
+  hectorLegLow: `${ROOT_BSP_CONTENT_PREFIX}/212.json`,
   plasma: `${ROOT_BSP_CONTENT_PREFIX}/203.json`,
   missile: `${ROOT_BSP_CONTENT_PREFIX}/802.json`,
   grenade: `${ROOT_BSP_CONTENT_PREFIX}/820.json`
 } as const;
+const HECTOR_LEG_SPACE = 0.6;
+const HECTOR_LEG_HIGH_LENGTH = 0.905;
+const HECTOR_LEG_LOW_LENGTH = 1.15;
+const HECTOR_VIEWPORT_HEIGHT = 0.35;
+const HECTOR_DEFAULT_STANCE = 1.7;
 
 export default function LevelViewport({
   scene,
@@ -729,16 +737,7 @@ function syncPlayerMeshes(
     object.visible = player.alive;
     object.position.set(player.x, player.y, player.z);
     object.rotation.y = player.bodyYaw;
-
-    const turret = object.getObjectByName("turret");
-    if (turret) {
-      turret.rotation.y = player.turretYaw - player.bodyYaw;
-    }
-
-    const barrel = object.getObjectByName("barrel");
-    if (barrel) {
-      barrel.rotation.x = -player.turretPitch;
-    }
+    updatePlayerMarker(object, player);
   }
 
   for (const [playerId, object] of cache.entries()) {
@@ -750,6 +749,10 @@ function syncPlayerMeshes(
 }
 
 function createPlayerMarker(player: SnapshotPlayerState, isLocal: boolean): THREE.Object3D {
+  if (isWalkerAssemblyPlayer(player)) {
+    return createWalkerAssemblyMarker(player, isLocal);
+  }
+
   return createDynamicAssetMarker({
     shapeAssetUrl: player.shapeAssetUrl ?? LIVE_ASSET_URLS.hector,
     scale: player.scale ?? 1,
@@ -761,6 +764,184 @@ function createPlayerMarker(player: SnapshotPlayerState, isLocal: boolean): THRE
     }),
     fallback: () => createFallbackPlayerMarker(isLocal)
   });
+}
+
+function isWalkerAssemblyPlayer(player: SnapshotPlayerState): boolean {
+  return player.shapeKey === "bspAvaraA"
+    || player.shapeId === 102
+    || player.shapeAssetUrl === LIVE_ASSET_URLS.hector;
+}
+
+function updatePlayerMarker(object: THREE.Object3D, player: SnapshotPlayerState): void {
+  if (object.userData.playerVisualKind === "walker") {
+    updateWalkerAssemblyPose(object as THREE.Group, player);
+    return;
+  }
+
+  const turret = object.getObjectByName("turret");
+  if (turret) {
+    turret.rotation.y = player.turretYaw - player.bodyYaw;
+  }
+
+  const barrel = object.getObjectByName("barrel");
+  if (barrel) {
+    barrel.rotation.x = -player.turretPitch;
+  }
+}
+
+function createWalkerAssemblyMarker(player: SnapshotPlayerState, isLocal: boolean): THREE.Group {
+  const root = new THREE.Group();
+  root.userData.playerVisualKind = "walker";
+  root.userData.walkerPhase = 0;
+  root.userData.walkerPhaseAt = performance.now();
+
+  const baseMaterial = new THREE.MeshStandardMaterial({
+    color: player.color ?? (isLocal ? "#d1a348" : "#7dbbff"),
+    metalness: 0.18,
+    roughness: 0.72
+  });
+  const accentMaterial = new THREE.MeshStandardMaterial({
+    color: player.accentColor ?? (isLocal ? "#f1df9e" : "#b6d5ff"),
+    metalness: 0.08,
+    roughness: 0.62
+  });
+
+  const headPivot = new THREE.Group();
+  headPivot.name = "walker-head";
+  root.add(headPivot);
+  attachBspMesh(headPivot, LIVE_ASSET_URLS.hectorHead, accentMaterial);
+
+  const leftUpper = new THREE.Group();
+  leftUpper.name = "walker-left-upper";
+  root.add(leftUpper);
+  attachBspMesh(leftUpper, LIVE_ASSET_URLS.hectorLegHigh, baseMaterial);
+
+  const rightUpper = new THREE.Group();
+  rightUpper.name = "walker-right-upper";
+  root.add(rightUpper);
+  attachBspMesh(rightUpper, LIVE_ASSET_URLS.hectorLegHigh, baseMaterial, {
+    preRotateY: Math.PI
+  });
+
+  const leftLower = new THREE.Group();
+  leftLower.name = "walker-left-lower";
+  leftUpper.add(leftLower);
+  attachBspMesh(leftLower, LIVE_ASSET_URLS.hectorLegLow, baseMaterial);
+
+  const rightLower = new THREE.Group();
+  rightLower.name = "walker-right-lower";
+  rightUpper.add(rightLower);
+  attachBspMesh(rightLower, LIVE_ASSET_URLS.hectorLegLow, baseMaterial, {
+    preRotateY: Math.PI
+  });
+
+  updateWalkerAssemblyPose(root, player);
+  return root;
+}
+
+function updateWalkerAssemblyPose(root: THREE.Group, player: SnapshotPlayerState): void {
+  const now = performance.now();
+  const previousSample = typeof root.userData.walkerPhaseAt === "number" ? root.userData.walkerPhaseAt : now;
+  const elapsedSeconds = Math.min(0.05, Math.max(0.001, (now - previousSample) / 1000));
+  root.userData.walkerPhaseAt = now;
+
+  const leftMotor = player.leftMotor ?? 0;
+  const rightMotor = player.rightMotor ?? 0;
+  const gaitMagnitude = Math.min(1, (Math.abs(leftMotor) + Math.abs(rightMotor)) / 0.3);
+  const direction = leftMotor + rightMotor >= 0 ? 1 : -1;
+  const phaseAdvance = gaitMagnitude * 5.5 * elapsedSeconds * direction;
+  const nextPhase = (Number(root.userData.walkerPhase) || 0) + phaseAdvance;
+  root.userData.walkerPhase = nextPhase;
+
+  const elevation = player.stance ?? HECTOR_DEFAULT_STANCE;
+  const crouch = player.crouch ?? 0;
+  const hipHeight = Math.max(0.95, elevation - crouch);
+  const yawDelta = normalizeAngle(player.turretYaw - player.bodyYaw);
+
+  const head = root.getObjectByName("walker-head");
+  if (head) {
+    head.position.set(0, hipHeight + HECTOR_VIEWPORT_HEIGHT, 0);
+    head.rotation.set(-player.turretPitch, yawDelta, -yawDelta * 0.18);
+  }
+
+  const turnBias = Math.max(-0.35, Math.min(0.35, (rightMotor - leftMotor) / 0.18));
+  const strideReach = 0.26 + gaitMagnitude * 0.34;
+  const footLift = 0.08 + gaitMagnitude * 0.22;
+
+  const leftPose = solveWalkerLegPose(hipHeight, strideReach * Math.sin(nextPhase) - turnBias * 0.1, footLift * Math.max(0, Math.sin(nextPhase)));
+  const rightPose = solveWalkerLegPose(
+    hipHeight,
+    strideReach * Math.sin(nextPhase + Math.PI) + turnBias * 0.1,
+    footLift * Math.max(0, Math.sin(nextPhase + Math.PI))
+  );
+
+  const leftUpper = root.getObjectByName("walker-left-upper");
+  if (leftUpper) {
+    leftUpper.position.set(-HECTOR_LEG_SPACE, hipHeight, 0);
+    leftUpper.rotation.set(leftPose.upperAngle, 0, 0);
+  }
+
+  const rightUpper = root.getObjectByName("walker-right-upper");
+  if (rightUpper) {
+    rightUpper.position.set(HECTOR_LEG_SPACE, hipHeight, 0);
+    rightUpper.rotation.set(rightPose.upperAngle, 0, 0);
+  }
+
+  const leftLower = root.getObjectByName("walker-left-lower");
+  if (leftLower) {
+    leftLower.position.set(0, -HECTOR_LEG_HIGH_LENGTH, 0);
+    leftLower.rotation.set(-leftPose.lowerAngle, 0, 0);
+  }
+
+  const rightLower = root.getObjectByName("walker-right-lower");
+  if (rightLower) {
+    rightLower.position.set(0, -HECTOR_LEG_HIGH_LENGTH, 0);
+    rightLower.rotation.set(-rightPose.lowerAngle, 0, 0);
+  }
+}
+
+function solveWalkerLegPose(hipHeight: number, forwardOffset: number, lift: number): { upperAngle: number; lowerAngle: number } {
+  const clampedTargetY = -(Math.max(0.25, hipHeight - lift));
+  const distance = Math.min(
+    HECTOR_LEG_HIGH_LENGTH + HECTOR_LEG_LOW_LENGTH - 0.001,
+    Math.max(0.1, Math.hypot(forwardOffset, clampedTargetY))
+  );
+  const kneeInterior = Math.acos(
+    THREE.MathUtils.clamp(
+      (HECTOR_LEG_HIGH_LENGTH ** 2 + HECTOR_LEG_LOW_LENGTH ** 2 - distance ** 2)
+      / (2 * HECTOR_LEG_HIGH_LENGTH * HECTOR_LEG_LOW_LENGTH),
+      -1,
+      1
+    )
+  );
+  const upperReach = Math.acos(
+    THREE.MathUtils.clamp(
+      (HECTOR_LEG_HIGH_LENGTH ** 2 + distance ** 2 - HECTOR_LEG_LOW_LENGTH ** 2)
+      / (2 * HECTOR_LEG_HIGH_LENGTH * distance),
+      -1,
+      1
+    )
+  );
+  const upperAngle = Math.atan2(forwardOffset, -clampedTargetY) - upperReach;
+  const lowerAngle = Math.PI - kneeInterior;
+  return { upperAngle, lowerAngle };
+}
+
+function attachBspMesh(
+  root: THREE.Group,
+  url: string,
+  material: THREE.MeshStandardMaterial,
+  options?: { preRotateY?: number }
+): void {
+  void loadBspGeometry(url)
+    .then((geometry) => {
+      const mesh = new THREE.Mesh(geometry, material);
+      if (options?.preRotateY) {
+        mesh.rotation.y = options.preRotateY;
+      }
+      root.add(mesh);
+    })
+    .catch(() => undefined);
 }
 
 function createFallbackPlayerMarker(isLocal: boolean): THREE.Object3D {
