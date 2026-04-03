@@ -1,4 +1,6 @@
 build*
+!packages/native-core/scripts/build-native.mjs
+!packages/native-core/scripts/build-wasm.sh
 .DS_Store
 *.patch
 *.diff
