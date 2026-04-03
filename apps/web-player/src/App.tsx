@@ -818,250 +818,18 @@ export function App() {
       </div>
 
       <div className="app-shell">
-      <aside className="panel panel-left">
-        <div className="card brand-card">
-          <div className="window-titlebar">
-            <strong>Avara Online</strong>
-            <span>Control Desk</span>
-          </div>
-          <div className="brand-block">
-            <span className="eyebrow">Arena Control</span>
-            <h1>Launch classic mech matches from the browser.</h1>
-            <p>Pick a room, tune the controls, and click into the arena when you are ready to drive.</p>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="card-header">
-            <h2>Pilot</h2>
-            <span>{identity?.displayName ?? "Loading guest…"}</span>
-          </div>
-          <p>Your controls and graphics settings stay saved in this browser, so you can jump back into a room without redoing setup.</p>
-          <div className="pilot-summary">
-            <span>{identity?.guest ? "Guest identity" : "Registered identity"}</span>
-            <span>{formatGraphicsQuality(playerSettings.graphicsQuality)} renderer</span>
-            <span>{viewportTelemetry.fps ? `${viewportTelemetry.fps} FPS` : "Sampling FPS"}</span>
-          </div>
-        </div>
-
-        {!onboardingDismissed ? (
-          <div className="card">
-            <div className="card-header">
-              <h2>Quick Start</h2>
-              <span>Read me first</span>
-            </div>
-            <p>Modernized is the easiest way in. Create or join a room, click the arena to capture the mouse, and start moving.</p>
-            <div className="checklist">
-              {onboardingChecklist.map((step) => (
-                <div key={step.id} className={step.done ? "checklist-item checklist-item-done" : "checklist-item"}>
-                  <span>{step.done ? "Ready" : "Next"}</span>
-                  <strong>{step.label}</strong>
-                </div>
-              ))}
-            </div>
-            <div className="card-actions">
-              <button
-                className="secondary-button"
-                onClick={() => {
-                  persistOnboardingDismissed(true);
-                  setOnboardingDismissed(true);
-                }}
-              >
-                Dismiss guide
-              </button>
-            </div>
-          </div>
-        ) : null}
-
-        <div className="card">
-          <div className="card-header">
-            <h2>Control Panel</h2>
-            <span>Saved per guest</span>
-          </div>
-          <label className="field">
-            <span>Control preset</span>
-            <select
-              value={settingsDraft.controlPreset}
-              onChange={(event) =>
-                setSettingsDraft((current) => ({
-                  ...current,
-                  controlPreset: event.target.value as PlayerSettings["controlPreset"]
-                }))
-              }
-            >
-              {CONTROL_PRESETS.map((preset) => (
-                <option key={preset.id} value={preset.id}>
-                  {preset.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <p className="muted preset-copy">
-            {CONTROL_PRESETS.find((preset) => preset.id === settingsDraft.controlPreset)?.description}
-          </p>
-
-          <label className="field">
-            <span>Sensitivity</span>
-            <input
-              type="range"
-              min="0.2"
-              max="2"
-              step="0.05"
-              value={settingsDraft.sensitivity}
-              onChange={(event) =>
-                setSettingsDraft((current) => ({
-                  ...current,
-                  sensitivity: Number(event.target.value)
-                }))
-              }
-            />
-          </label>
-          <div className="field-inline">
-            <span className="muted">Current multiplier</span>
-            <strong>{settingsDraft.sensitivity.toFixed(2)}x</strong>
-          </div>
-
-          <label className="toggle-field">
-            <input
-              type="checkbox"
-              checked={settingsDraft.invertY}
-              onChange={(event) =>
-                setSettingsDraft((current) => ({
-                  ...current,
-                  invertY: event.target.checked
-                }))
-              }
-            />
-            <span>Invert Y axis</span>
-          </label>
-
-          <label className="field">
-            <span>Graphics quality</span>
-            <select
-              value={settingsDraft.graphicsQuality}
-              onChange={(event) =>
-                setSettingsDraft((current) => ({
-                  ...current,
-                  graphicsQuality: event.target.value as GraphicsQuality
-                }))
-              }
-            >
-              {GRAPHICS_QUALITY_OPTIONS.map((quality) => (
-                <option key={quality.id} value={quality.id}>
-                  {quality.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <p className="muted preset-copy">
-            {GRAPHICS_QUALITY_OPTIONS.find((quality) => quality.id === settingsDraft.graphicsQuality)?.description}
-          </p>
-
-          <label className="toggle-field">
-            <input
-              type="checkbox"
-              checked={settingsDraft.showPerformanceHud}
-              onChange={(event) =>
-                setSettingsDraft((current) => ({
-                  ...current,
-                  showPerformanceHud: event.target.checked
-                }))
-              }
-            />
-            <span>Show FPS and render diagnostics in match</span>
-          </label>
-
-          <div className="binding-list">
-            {selectedBindings.map((binding) => (
-              <div key={binding.action} className="binding-row">
-                <span>{binding.action}</span>
-                <strong>{binding.keys}</strong>
-              </div>
-            ))}
-          </div>
-
-          <div className="card-actions">
-            <button className="primary-button" disabled={!settingsDirty || settingsBusy} onClick={handleSaveSettings}>
-              {settingsBusy ? "Saving…" : "Save setup"}
-            </button>
-            <button className="secondary-button" disabled={!settingsDirty || settingsBusy} onClick={() => setSettingsDraft(playerSettings)}>
-              Reset
-            </button>
-          </div>
-          {settingsNotice ? <p className="muted">{settingsNotice}</p> : null}
-        </div>
-
-        {activeLobbyCampaign ? (
-          <div className="card">
-            <div className="card-header">
-              <h2>Featured Banner</h2>
-              <span>{activeLobbyCampaign.name}</span>
-            </div>
-            <>
-              <img className="ad-surface" src={activeLobbyCampaign.creativeUrl} alt={activeLobbyCampaign.name} />
-              <div className="pilot-summary">
-                <span>{activeLobbyCampaign.status}</span>
-                <span>{activeLobbyCampaign.frequencyCapPerSession} impressions per session cap</span>
-              </div>
-              {activeLobbyCampaign.destinationUrl ? (
-                <button className="secondary-button" onClick={() => handleAdClick(activeLobbyCampaign, "lobby_banner")}>
-                  Open sponsor
-                </button>
-              ) : null}
-            </>
-          </div>
-        ) : null}
-
-        <div className="card">
-          <div className="card-header">
-            <h2>New Room</h2>
-            <span>{featuredLevel?.title ?? "No level selected"}</span>
-          </div>
-          <label className="field">
-            <span>Room name</span>
-            <input value={roomName} onChange={(event) => setRoomName(event.target.value)} />
-          </label>
-          <label className="field">
-            <span>Visibility</span>
-            <select value={roomVisibility} onChange={(event) => setRoomVisibility(event.target.value as Visibility)}>
-              <option value="public">Public room</option>
-              <option value="private">Private room</option>
-            </select>
-          </label>
-          <p>
-            {featuredLevel
-              ? "Public rooms appear in the browser. Private rooms stay link-driven, but guests can still host them."
-              : "Room creation is disabled until the imported level catalog loads from the API."}
-          </p>
-          <button className="primary-button" disabled={!featuredLevel || busy} onClick={handleCreateRoom}>
-            {busy ? "Working…" : "Create room"}
-          </button>
-        </div>
-
-        <div className="card">
-          <div className="card-header">
-            <h2>Invite Code</h2>
-            <span>Join a room</span>
-          </div>
-          <label className="field">
-            <span>Invite code</span>
-            <input
-              value={inviteCodeInput}
-              onChange={(event) => setInviteCodeInput(event.target.value.toUpperCase())}
-              placeholder="ABC123"
-            />
-          </label>
-          <button className="primary-button" disabled={!inviteCodeInput.trim() || busy} onClick={handleJoinByInvite}>
-            Join from invite
-          </button>
-        </div>
-      </aside>
-
       <main className="main-stage">
         <div className="hero-bar">
-          <div>
+          <div className="hero-heading">
             <span className="eyebrow">Arena Window</span>
             <h2>{featuredLevel?.title ?? "Choose a room"}</h2>
+            <p className="muted hero-copy">
+              {connectedRoom
+                ? `Connected as ${identity?.displayName ?? "guest"} in ${connectedRoom.name}. Click the arena to drive.`
+                : selectedRoom
+                  ? `Selected room ready: ${selectedRoom.name}. Join it, or spin up a fresh room below.`
+                  : "Pick a live room or create a fresh one, then click into the arena when you are ready to drive."}
+            </p>
           </div>
           <div className="hero-status">
             <span>{rooms.length} visible rooms</span>
@@ -1073,45 +841,274 @@ export function App() {
           </div>
         </div>
 
-        {!connectedRoom ? (
-          <div className="start-card">
-            <div>
-              <span className="eyebrow">Start Match</span>
-              <strong>
-                {!levels.length
-                  ? "Catalog load failed"
-                  : selectedRoom
-                    ? `Join ${selectedRoom.name}`
-                    : `Create a room on ${featuredLevel?.title ?? "the imported level set"}`}
-              </strong>
-              <p className="muted">
-                {!levels.length
-                  ? "The browser did not get the imported level catalog from the API, so room creation is blocked until the API and domain routing are healthy."
-                  : selectedRoom
-                    ? "Join the selected room, then click the arena to lock the pointer and start moving."
-                    : "Create a room, then click the arena to lock the pointer. Drive with W and S, turn with A and D, fire with click or Space, and load missiles or grenades with Q and E."}
-              </p>
+        <div className="control-dock">
+          <div className="card dock-card launch-console">
+            <div className="card-header">
+              <h2>Launch Console</h2>
+              <span>{selectedRoom?.name ?? featuredLevel?.title ?? "Ready"}</span>
             </div>
-            <div className="start-card-actions">
-              {selectedRoom ? (
-                <button className="secondary-button" disabled={busy} onClick={handleJoinSelectedRoom}>
-                  {busy ? "Working…" : "Join selected room"}
+            <div className="launch-console-grid">
+              <div className="launch-callout">
+                <span className="eyebrow">{connectedRoom ? "Live room" : "Start match"}</span>
+                <strong>
+                  {!levels.length
+                    ? "Catalog load failed"
+                    : connectedRoom
+                      ? `Connected to ${connectedRoom.name}`
+                      : selectedRoom
+                        ? `Join ${selectedRoom.name}`
+                        : `Create a room on ${featuredLevel?.title ?? "the imported level set"}`}
+                </strong>
+                <p className="muted">
+                  {!levels.length
+                    ? "The browser did not get the imported level catalog from the API, so room creation is blocked until the API is reachable."
+                    : connectedRoom
+                      ? "Click the arena to lock the pointer. Movement starts as soon as the authoritative loop sees your input."
+                      : selectedRoom
+                        ? "Join the selected room, then click the arena to capture the pointer and start moving."
+                        : "Create a room, then click the arena to drive. W/S move, A/D turn, click or Space fires, and Q/E load weapons."}
+                </p>
+                {(selectedRoom || connectedRoom) ? (
+                  <div className="pilot-summary launch-room-meta">
+                    <span>{(connectedRoom ?? selectedRoom)?.levelTitle}</span>
+                    <span>{(connectedRoom ?? selectedRoom)?.visibility}</span>
+                    <span>{(connectedRoom ?? selectedRoom)?.currentPlayers ?? 0}/{(connectedRoom ?? selectedRoom)?.playerCap ?? 8} pilots</span>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="launch-actions">
+                {selectedRoom ? (
+                  <button className="primary-button" disabled={busy || connectedRoom?.id === selectedRoom.id} onClick={handleJoinSelectedRoom}>
+                    {connectedRoom?.id === selectedRoom.id ? "Connected" : busy ? "Working…" : "Join selected room"}
+                  </button>
+                ) : null}
+                <button className="secondary-button" disabled={!featuredLevel || busy} onClick={handleCreateRoom}>
+                  {busy ? "Working…" : "Quick start: create room"}
                 </button>
-              ) : null}
-              <button className="primary-button" disabled={!featuredLevel || busy} onClick={handleCreateRoom}>
-                {busy ? "Working…" : "Quick start: create room"}
+                {shareInviteUrl ? (
+                  <button className="secondary-button" onClick={handleCopyInvite}>
+                    Copy invite
+                  </button>
+                ) : null}
+                {connectedRoom ? (
+                  <button className="secondary-button" onClick={handleDisconnectRoom}>
+                    Disconnect
+                  </button>
+                ) : null}
+                {connectedRoom?.id === selectedRoom?.id && identity?.id === selectedRoom.ownerUserId ? (
+                  <button className="secondary-button" disabled={busy} onClick={handleEndRoom}>
+                    End room
+                  </button>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="launch-forms">
+              <div className="launch-form-group">
+                <label className="field">
+                  <span>Room name</span>
+                  <input value={roomName} onChange={(event) => setRoomName(event.target.value)} />
+                </label>
+                <label className="field">
+                  <span>Visibility</span>
+                  <select value={roomVisibility} onChange={(event) => setRoomVisibility(event.target.value as Visibility)}>
+                    <option value="public">Public room</option>
+                    <option value="private">Private room</option>
+                  </select>
+                </label>
+              </div>
+
+              <div className="launch-form-group">
+                <label className="field">
+                  <span>Invite code</span>
+                  <input
+                    value={inviteCodeInput}
+                    onChange={(event) => setInviteCodeInput(event.target.value.toUpperCase())}
+                    placeholder="ABC123"
+                  />
+                </label>
+                <button className="secondary-button" disabled={!inviteCodeInput.trim() || busy} onClick={handleJoinByInvite}>
+                  Join from invite
+                </button>
+              </div>
+            </div>
+
+            {copyStatus ? <p className="muted">{copyStatus}</p> : null}
+          </div>
+
+          <div className="card dock-card pilot-card">
+            <div className="card-header">
+              <h2>Pilot</h2>
+              <span>{identity?.displayName ?? "Loading guest…"}</span>
+            </div>
+            <div className="pilot-summary pilot-summary-tight">
+              <span>{identity?.guest ? "Guest identity" : "Registered identity"}</span>
+              <span>{formatGraphicsQuality(playerSettings.graphicsQuality)} renderer</span>
+              <span>{viewportTelemetry.fps ? `${viewportTelemetry.fps} FPS` : "Sampling"}</span>
+            </div>
+            <p className="muted compact-copy">
+              Controls and graphics stay saved in this browser, so you can jump back into the arena without redoing setup.
+            </p>
+            {!onboardingDismissed ? (
+              <div className="compact-guide">
+                <div className="compact-guide-list">
+                  {onboardingChecklist.map((step) => (
+                    <div key={step.id} className={step.done ? "checklist-item checklist-item-done" : "checklist-item"}>
+                      <span>{step.done ? "Ready" : "Next"}</span>
+                      <strong>{step.label}</strong>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  className="secondary-button"
+                  onClick={() => {
+                    persistOnboardingDismissed(true);
+                    setOnboardingDismissed(true);
+                  }}
+                >
+                  Dismiss guide
+                </button>
+              </div>
+            ) : (
+              <div className="compact-tip">
+                <span className="eyebrow">Quick start</span>
+                <strong>{pointerLocked ? "Pointer locked" : "Click the arena to lock your pointer"}</strong>
+              </div>
+            )}
+            {activeLobbyCampaign ? (
+              <div className="compact-sponsor">
+                <span>{activeLobbyCampaign.name}</span>
+                {activeLobbyCampaign.destinationUrl ? (
+                  <button className="secondary-button" onClick={() => handleAdClick(activeLobbyCampaign, "lobby_banner")}>
+                    Open sponsor
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+
+          <details className="card dock-card settings-drawer">
+            <summary className="details-summary">
+              <span>Control Panel</span>
+              <span>{settingsDirty ? "Unsaved" : "Saved"}</span>
+            </summary>
+
+            <label className="field">
+              <span>Control preset</span>
+              <select
+                value={settingsDraft.controlPreset}
+                onChange={(event) =>
+                  setSettingsDraft((current) => ({
+                    ...current,
+                    controlPreset: event.target.value as PlayerSettings["controlPreset"]
+                  }))
+                }
+              >
+                {CONTROL_PRESETS.map((preset) => (
+                  <option key={preset.id} value={preset.id}>
+                    {preset.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="muted preset-copy">
+              {CONTROL_PRESETS.find((preset) => preset.id === settingsDraft.controlPreset)?.description}
+            </p>
+
+            <label className="field">
+              <span>Sensitivity</span>
+              <input
+                type="range"
+                min="0.2"
+                max="2"
+                step="0.05"
+                value={settingsDraft.sensitivity}
+                onChange={(event) =>
+                  setSettingsDraft((current) => ({
+                    ...current,
+                    sensitivity: Number(event.target.value)
+                  }))
+                }
+              />
+            </label>
+            <div className="field-inline">
+              <span className="muted">Current multiplier</span>
+              <strong>{settingsDraft.sensitivity.toFixed(2)}x</strong>
+            </div>
+
+            <label className="toggle-field">
+              <input
+                type="checkbox"
+                checked={settingsDraft.invertY}
+                onChange={(event) =>
+                  setSettingsDraft((current) => ({
+                    ...current,
+                    invertY: event.target.checked
+                  }))
+                }
+              />
+              <span>Invert Y axis</span>
+            </label>
+
+            <label className="field">
+              <span>Graphics quality</span>
+              <select
+                value={settingsDraft.graphicsQuality}
+                onChange={(event) =>
+                  setSettingsDraft((current) => ({
+                    ...current,
+                    graphicsQuality: event.target.value as GraphicsQuality
+                  }))
+                }
+              >
+                {GRAPHICS_QUALITY_OPTIONS.map((quality) => (
+                  <option key={quality.id} value={quality.id}>
+                    {quality.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="muted preset-copy">
+              {GRAPHICS_QUALITY_OPTIONS.find((quality) => quality.id === settingsDraft.graphicsQuality)?.description}
+            </p>
+
+            <label className="toggle-field">
+              <input
+                type="checkbox"
+                checked={settingsDraft.showPerformanceHud}
+                onChange={(event) =>
+                  setSettingsDraft((current) => ({
+                    ...current,
+                    showPerformanceHud: event.target.checked
+                  }))
+                }
+              />
+              <span>Show FPS and render diagnostics in match</span>
+            </label>
+
+            <div className="binding-list">
+              {selectedBindings.map((binding) => (
+                <div key={binding.action} className="binding-row">
+                  <span>{binding.action}</span>
+                  <strong>{binding.keys}</strong>
+                </div>
+              ))}
+            </div>
+
+            <div className="card-actions">
+              <button className="primary-button" disabled={!settingsDirty || settingsBusy} onClick={handleSaveSettings}>
+                {settingsBusy ? "Saving…" : "Save setup"}
+              </button>
+              <button className="secondary-button" disabled={!settingsDirty || settingsBusy} onClick={() => setSettingsDraft(playerSettings)}>
+                Reset
               </button>
             </div>
-          </div>
-        ) : !pointerLocked ? (
-          <div className="start-card">
-            <div>
-              <span className="eyebrow">Pointer Lock</span>
-              <strong>Click the arena to take control</strong>
-              <p className="muted">Once the pointer is locked, the authoritative match loop is live and movement starts immediately.</p>
-            </div>
-          </div>
-        ) : null}
+            {settingsNotice ? <p className="muted">{settingsNotice}</p> : null}
+          </details>
+        </div>
+
+        {error ? <div className="card error-card inline-error-card">{error}</div> : null}
 
         {busy && activeLoadingCampaign ? (
           <div className="inline-ad-card">
@@ -1143,6 +1140,17 @@ export function App() {
             onTelemetryChange={setViewportTelemetry}
           />
         </Suspense>
+
+        {compatibilityNotes.length ? (
+          <div className="notice-strip">
+            {compatibilityNotes.map((note) => (
+              <div key={note.title} className="notice-card">
+                <strong>{note.title}</strong>
+                <p>{note.detail}</p>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </main>
 
       <aside className="panel panel-right">
@@ -1179,84 +1187,64 @@ export function App() {
           </div>
         </div>
 
-        <div className="card">
-          <div className="card-header">
-            <h2>Room Detail</h2>
-            <span>{selectedRoom ? selectedRoom.inviteCode : "Nothing selected"}</span>
-          </div>
-          {selectedRoom ? (
-            <>
-              <div className="pilot-summary">
-                <span>{selectedRoom.levelTitle}</span>
-                <span>{selectedRoom.visibility}</span>
-                <span>Worker {selectedRoom.gameWorkerId}</span>
-              </div>
-              <div className="room-actions">
-                <button className="primary-button" disabled={busy || connectedRoom?.id === selectedRoom.id} onClick={handleJoinSelectedRoom}>
-                  {connectedRoom?.id === selectedRoom.id ? "Connected" : "Join room"}
-                </button>
-                <button className="secondary-button" disabled={!shareInviteUrl} onClick={handleCopyInvite}>
-                  Copy invite
-                </button>
-                {connectedRoom?.id === selectedRoom.id ? (
-                  <button className="secondary-button" onClick={handleDisconnectRoom}>
-                    Disconnect
-                  </button>
-                ) : null}
-                {connectedRoom?.id === selectedRoom.id && identity?.id === selectedRoom.ownerUserId ? (
-                  <button className="secondary-button" disabled={busy} onClick={handleEndRoom}>
-                    End room
-                  </button>
-                ) : null}
-              </div>
-              <p className="muted invite-preview">{shareInviteUrl || "Invite link unavailable"}</p>
-              {copyStatus ? <p className="muted">{copyStatus}</p> : null}
-            </>
-          ) : (
-            <p className="muted">Select a room to inspect it before joining.</p>
-          )}
-        </div>
-
-        <div className="card">
-          <div className="card-header">
-            <h2>System</h2>
-            <span>{compatibilityNotes.length ? "Attention" : "Healthy"}</span>
-          </div>
-          {compatibilityNotes.length ? (
-            <div className="notice-list">
-              {compatibilityNotes.map((note) => (
-                <div key={note.title} className="notice-card">
-                  <strong>{note.title}</strong>
-                  <p>{note.detail}</p>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="muted">
-              WebGL renderer is healthy. Hidden tabs now back off polling, and the viewport is running at roughly{" "}
-              {viewportTelemetry.fps ? `${viewportTelemetry.fps} FPS` : "live-sampled FPS"} with a {formatGraphicsQuality(viewportTelemetry.quality).toLowerCase()} profile.
-            </p>
-          )}
-          <div className="pilot-summary">
-            <span>Pixel ratio {viewportTelemetry.pixelRatio.toFixed(2)}</span>
-            <span>{documentHidden ? "Background throttling active" : "Foreground render path"}</span>
-          </div>
-        </div>
-
-        {billboards.length ? (
+        {selectedRoom ? (
           <div className="card">
             <div className="card-header">
-              <h2>Arena billboards</h2>
-              <span>{billboards.length} active</span>
+              <h2>Selection</h2>
+              <span>{selectedRoom.inviteCode}</span>
             </div>
-            <div className="pilot-summary">
+            <div className="pilot-summary pilot-summary-tight">
+              <span>{selectedRoom.levelTitle}</span>
+              <span>{selectedRoom.visibility}</span>
+              <span>Worker {selectedRoom.gameWorkerId}</span>
+            </div>
+            <p className="muted invite-preview">{shareInviteUrl || "Invite link unavailable"}</p>
+          </div>
+        ) : null}
+
+        <details className="card sidebar-drawer" open>
+          <summary className="details-summary">
+            <span>Level Catalog</span>
+            <span>{levels.length ? "Available now" : "Waiting on API"}</span>
+          </summary>
+          <div className="level-list">
+            {levels.length ? (
+              levels.slice(0, 8).map((level) => (
+                <button
+                  key={level.id}
+                  className={level.id === activeLevelId ? "level-chip level-chip-active" : "level-chip"}
+                  onClick={() => {
+                    setSelectedRoomId("");
+                    setActiveLevelId(level.id);
+                  }}
+                >
+                  <strong>{level.title}</strong>
+                  <span>{level.packTitle}</span>
+                </button>
+              ))
+            ) : (
+              <div className="empty-state-card">
+                <strong>No imported levels available</strong>
+                <p>The API did not return a catalog, so the browser cannot create or preview a level yet.</p>
+              </div>
+            )}
+          </div>
+        </details>
+
+        {billboards.length ? (
+          <details className="card sidebar-drawer">
+            <summary className="details-summary">
+              <span>Arena Billboards</span>
+              <span>{billboards.length} active</span>
+            </summary>
+            <div className="pilot-summary billboard-list">
               {billboards.map((billboard) => (
                 <span key={billboard.nodeId}>
                   {billboard.slotId}: {billboard.campaignName ?? "Open inventory"}
                 </span>
               ))}
             </div>
-          </div>
+          </details>
         ) : null}
 
         {snapshot?.roomStatus === "ended" ? (
@@ -1281,36 +1269,16 @@ export function App() {
           </div>
         ) : null}
 
-        <div className="card">
+        <div className="card status-card">
           <div className="card-header">
-            <h2>Level Catalog</h2>
-            <span>{levels.length ? "Available now" : "Waiting on API"}</span>
+            <h2>System</h2>
+            <span>{compatibilityNotes.length ? "Attention" : "Healthy"}</span>
           </div>
-          <div className="level-list">
-            {levels.length ? (
-              levels.slice(0, 10).map((level) => (
-                <button
-                  key={level.id}
-                  className={level.id === activeLevelId ? "level-chip level-chip-active" : "level-chip"}
-                  onClick={() => {
-                    setSelectedRoomId("");
-                    setActiveLevelId(level.id);
-                  }}
-                >
-                  <strong>{level.title}</strong>
-                  <span>{level.packTitle}</span>
-                </button>
-              ))
-            ) : (
-              <div className="empty-state-card">
-                <strong>No imported levels available</strong>
-                <p>The API did not return a catalog, so the browser cannot create or preview a level yet.</p>
-              </div>
-            )}
+          <div className="pilot-summary pilot-summary-tight">
+            <span>Pixel ratio {viewportTelemetry.pixelRatio.toFixed(2)}</span>
+            <span>{documentHidden ? "Background throttling active" : "Foreground render path"}</span>
           </div>
         </div>
-
-        {error ? <div className="card error-card">{error}</div> : null}
       </aside>
       </div>
     </div>

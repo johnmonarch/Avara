@@ -26,6 +26,7 @@ body {
     linear-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px),
     linear-gradient(180deg, #c9c9c9 0%, #ababab 100%);
   background-size: 4px 4px, 4px 4px, auto;
+  overflow: hidden;
 }
 
 button,
@@ -40,15 +41,18 @@ a {
 
 .app-shell {
   display: grid;
-  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr) minmax(260px, 340px);
-  gap: 18px;
-  min-height: calc(100vh - 64px);
-  padding: 14px;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 310px);
+  gap: 12px;
+  height: 100%;
+  min-height: 0;
+  padding: 12px;
+  overflow: hidden;
 }
 
 .desktop-shell {
-  min-height: 100vh;
-  padding-top: 44px;
+  height: 100vh;
+  padding-top: 30px;
+  overflow: hidden;
 }
 
 .menu-bar {
@@ -95,7 +99,13 @@ a {
 .panel {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
+  min-height: 0;
+}
+
+.panel-right {
+  overflow: auto;
+  padding-right: 2px;
 }
 
 .card,
@@ -120,7 +130,7 @@ a {
 }
 
 .hero-bar h2 {
-  margin: 4px 0 8px;
+  margin: 4px 0 4px;
   line-height: 1;
   font-size: clamp(1.6rem, 2vw, 2.4rem);
 }
@@ -143,22 +153,33 @@ a {
 }
 
 .main-stage {
-  display: grid;
-  grid-template-rows: auto 1fr;
-  gap: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .hero-bar {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 520px);
+  align-items: start;
+  gap: 12px;
+}
+
+.hero-heading {
+  min-width: 0;
+}
+
+.hero-copy {
+  margin: 0;
 }
 
 .hero-status {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
-  min-width: min(420px, 100%);
+  min-width: 0;
 }
 
 .hero-status span {
@@ -172,6 +193,8 @@ a {
 
 .viewport-shell {
   position: relative;
+  flex: 1;
+  min-height: clamp(360px, 52vh, 680px);
   overflow: hidden;
   border-radius: 0;
   background:
@@ -183,13 +206,13 @@ a {
 .viewport-empty {
   width: 100%;
   height: 100%;
-  min-height: 600px;
+  min-height: 100%;
 }
 
 .viewport-loading {
   display: grid;
   place-items: center;
-  min-height: 600px;
+  min-height: clamp(360px, 52vh, 680px);
 }
 
 .viewport-empty {
@@ -453,6 +476,164 @@ a {
 
 .ad-surface-inline {
   margin-top: 0;
+}
+
+.control-dock {
+  display: grid;
+  grid-template-columns: minmax(320px, 1.35fr) minmax(220px, 0.9fr) minmax(240px, 1fr);
+  gap: 12px;
+  flex: 0 0 auto;
+}
+
+.dock-card {
+  display: grid;
+  align-content: start;
+}
+
+.launch-console-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px;
+  gap: 12px;
+  align-items: start;
+}
+
+.launch-callout {
+  display: grid;
+  gap: 6px;
+}
+
+.launch-callout strong {
+  font-size: 1.05rem;
+}
+
+.launch-callout p {
+  margin: 0;
+}
+
+.launch-room-meta {
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.launch-actions {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.launch-actions .primary-button,
+.launch-actions .secondary-button {
+  width: 100%;
+}
+
+.launch-forms {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(210px, 0.8fr);
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.launch-form-group {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.pilot-card {
+  gap: 10px;
+}
+
+.pilot-summary-tight {
+  margin-top: 0;
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+.compact-copy {
+  margin: 0;
+}
+
+.compact-guide {
+  display: grid;
+  gap: 10px;
+}
+
+.compact-guide-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.compact-tip,
+.compact-sponsor {
+  padding: 10px 12px;
+  border-radius: 0;
+  background: #cfcfcf;
+  border: 1px solid #000;
+  box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #7d7d7d;
+}
+
+.compact-tip {
+  display: grid;
+  gap: 4px;
+}
+
+.compact-sponsor {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.details-summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: -12px -12px 12px;
+  padding: 6px 10px;
+  color: #111;
+  cursor: pointer;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      #ffffff 0,
+      #ffffff 3px,
+      #b7b7b7 3px,
+      #b7b7b7 6px
+    );
+  border-bottom: 1px solid #000;
+}
+
+.details-summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-drawer[open],
+.sidebar-drawer[open] {
+  gap: 0;
+}
+
+.sidebar-drawer {
+  display: grid;
+  align-content: start;
+}
+
+.notice-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.inline-error-card {
+  padding: 10px 12px;
+  flex: 0 0 auto;
+}
+
+.billboard-list {
+  flex-direction: column;
+  align-items: flex-start;
 }
 
 .loading-ad {
@@ -742,6 +923,10 @@ a {
 }
 
 @media (max-width: 1200px) {
+  body {
+    overflow: auto;
+  }
+
   .menu-bar {
     height: auto;
     flex-direction: column;
@@ -750,11 +935,16 @@ a {
   }
 
   .desktop-shell {
+    height: auto;
+    min-height: 100vh;
     padding-top: 72px;
+    overflow: visible;
   }
 
   .app-shell {
     grid-template-columns: 1fr;
+    height: auto;
+    overflow: visible;
   }
 
   .panel,
@@ -763,13 +953,22 @@ a {
   }
 
   .hero-bar {
-    flex-direction: column;
+    grid-template-columns: 1fr;
   }
 
   .hero-status {
     width: 100%;
     min-width: 0;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .control-dock {
+    grid-template-columns: 1fr;
+  }
+
+  .launch-console-grid,
+  .launch-forms {
+    grid-template-columns: 1fr;
   }
 
   .viewport-canvas,
@@ -820,5 +1019,9 @@ a {
 
   .card-actions {
     flex-direction: column;
+  }
+
+  .compact-guide-list {
+    grid-template-columns: 1fr;
   }
 }
