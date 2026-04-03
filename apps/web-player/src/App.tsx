@@ -800,17 +800,40 @@ export function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className="desktop-shell">
+      <div className="menu-bar">
+        <div className="menu-items">
+          <strong>Avara Online</strong>
+          <span>File</span>
+          <span>Edit</span>
+          <span>Rooms</span>
+          <span>Pilot</span>
+          <span>Help</span>
+        </div>
+        <div className="menu-status">
+          <span>{identity?.displayName ?? "Guest"}</span>
+          <span>{featuredLevel?.title ?? "No arena"}</span>
+          <span>{viewportTelemetry.fps ? `${viewportTelemetry.fps} FPS` : "Sampling"}</span>
+        </div>
+      </div>
+
+      <div className="app-shell">
       <aside className="panel panel-left">
-        <div className="brand-block">
-          <span className="eyebrow">Avara Online</span>
-          <h1>Classic mech combat, rebuilt for the browser.</h1>
-          <p>Create or join a room, lock the pointer, and pilot through imported Avara levels with guest-friendly controls.</p>
+        <div className="card brand-card">
+          <div className="window-titlebar">
+            <strong>Avara Online</strong>
+            <span>Control Desk</span>
+          </div>
+          <div className="brand-block">
+            <span className="eyebrow">Arena Control</span>
+            <h1>Launch classic mech matches from the browser.</h1>
+            <p>Pick a room, tune the controls, and click into the arena when you are ready to drive.</p>
+          </div>
         </div>
 
         <div className="card">
           <div className="card-header">
-            <h2>Identity</h2>
+            <h2>Pilot</h2>
             <span>{identity?.displayName ?? "Loading guest…"}</span>
           </div>
           <p>Your controls and graphics settings stay saved in this browser, so you can jump back into a room without redoing setup.</p>
@@ -824,8 +847,8 @@ export function App() {
         {!onboardingDismissed ? (
           <div className="card">
             <div className="card-header">
-              <h2>How to Start</h2>
-              <span>Quick start</span>
+              <h2>Quick Start</h2>
+              <span>Read me first</span>
             </div>
             <p>Modernized is the easiest way in. Create or join a room, click the arena to capture the mouse, and start moving.</p>
             <div className="checklist">
@@ -852,7 +875,7 @@ export function App() {
 
         <div className="card">
           <div className="card-header">
-            <h2>Player Setup</h2>
+            <h2>Control Panel</h2>
             <span>Saved per guest</span>
           </div>
           <label className="field">
@@ -968,12 +991,12 @@ export function App() {
           {settingsNotice ? <p className="muted">{settingsNotice}</p> : null}
         </div>
 
-        <div className="card">
-          <div className="card-header">
-            <h2>Featured Banner</h2>
-            <span>{activeLobbyCampaign ? activeLobbyCampaign.name : "No sponsor"}</span>
-          </div>
-          {activeLobbyCampaign ? (
+        {activeLobbyCampaign ? (
+          <div className="card">
+            <div className="card-header">
+              <h2>Featured Banner</h2>
+              <span>{activeLobbyCampaign.name}</span>
+            </div>
             <>
               <img className="ad-surface" src={activeLobbyCampaign.creativeUrl} alt={activeLobbyCampaign.name} />
               <div className="pilot-summary">
@@ -986,14 +1009,12 @@ export function App() {
                 </button>
               ) : null}
             </>
-          ) : (
-            <p className="muted">No lobby campaign is active for this level right now.</p>
-          )}
-        </div>
+          </div>
+        ) : null}
 
         <div className="card">
           <div className="card-header">
-            <h2>Start a Room</h2>
+            <h2>New Room</h2>
             <span>{featuredLevel?.title ?? "No level selected"}</span>
           </div>
           <label className="field">
@@ -1019,8 +1040,8 @@ export function App() {
 
         <div className="card">
           <div className="card-header">
-            <h2>Join a Room</h2>
-            <span>Invite code</span>
+            <h2>Invite Code</h2>
+            <span>Join a room</span>
           </div>
           <label className="field">
             <span>Invite code</span>
@@ -1039,7 +1060,7 @@ export function App() {
       <main className="main-stage">
         <div className="hero-bar">
           <div>
-            <span className="eyebrow">Live Arena</span>
+            <span className="eyebrow">Arena Window</span>
             <h2>{featuredLevel?.title ?? "Choose a room"}</h2>
           </div>
           <div className="hero-status">
@@ -1127,7 +1148,7 @@ export function App() {
       <aside className="panel panel-right">
         <div className="card">
           <div className="card-header">
-            <h2>Room browser</h2>
+            <h2>Room Browser</h2>
             <span>Live rooms</span>
           </div>
           <div className="room-list">
@@ -1160,7 +1181,7 @@ export function App() {
 
         <div className="card">
           <div className="card-header">
-            <h2>Room detail</h2>
+            <h2>Room Detail</h2>
             <span>{selectedRoom ? selectedRoom.inviteCode : "Nothing selected"}</span>
           </div>
           {selectedRoom ? (
@@ -1262,7 +1283,7 @@ export function App() {
 
         <div className="card">
           <div className="card-header">
-            <h2>Level catalog</h2>
+            <h2>Level Catalog</h2>
             <span>{levels.length ? "Available now" : "Waiting on API"}</span>
           </div>
           <div className="level-list">
@@ -1291,6 +1312,7 @@ export function App() {
 
         {error ? <div className="card error-card">{error}</div> : null}
       </aside>
+      </div>
     </div>
   );
 }
