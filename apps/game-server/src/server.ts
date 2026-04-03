@@ -683,11 +683,7 @@ function simulateWalkerJump(room: RoomState, player: PlayerState, fpsScale: numb
 
 function simulateWalkerMotors(room: RoomState, player: PlayerState, fpsScale: number): void {
   const elevation = player.stance - player.crouch;
-  const classicMotorFriction = clamp(
-    room.settings.defaultFriction - Math.abs(elevation - HECTOR_BEST_SPEED_HEIGHT) / 4,
-    0.02,
-    0.98
-  );
+  const classicMotorFriction = HECTOR_CLASSIC_MOTOR_FRICTION - Math.abs(elevation - HECTOR_BEST_SPEED_HEIGHT) / 4;
   const classicMotorAcceleration = HECTOR_CLASSIC_ACCELERATION;
   const motorResponse = fpsCoefficients(
     classicMotorFriction,
@@ -744,7 +740,7 @@ function simulateWalkerMotors(room: RoomState, player: PlayerState, fpsScale: nu
   const motorDirX = Math.sin(averageHeading) * distance;
   const motorDirZ = Math.cos(averageHeading) * distance;
   const supportTraction = player.tractionFlag ? room.settings.defaultTraction : 0;
-  const supportFriction = player.tractionFlag ? classicMotorFriction : 0.005;
+  const supportFriction = player.tractionFlag ? room.settings.defaultFriction : 0.005;
   const slideX = motorDirX - player.vx;
   const slideZ = motorDirZ - player.vz;
   const slideLength = Math.hypot(slideX, slideZ);

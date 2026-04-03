@@ -49,6 +49,7 @@ const LIVE_ASSET_URLS = {
   missile: `${ROOT_BSP_CONTENT_PREFIX}/802.json`,
   grenade: `${ROOT_BSP_CONTENT_PREFIX}/820.json`
 } as const;
+const PRELOAD_ASSET_URLS = Object.values(LIVE_ASSET_URLS);
 const HECTOR_LEG_SPACE = 0.6;
 const HECTOR_LEG_HIGH_LENGTH = 0.905;
 const HECTOR_LEG_LOW_LENGTH = 1.15;
@@ -247,6 +248,8 @@ export default function LevelViewport({
     const projectileMeshes = new Map<string, THREE.Object3D>();
     const playerMeshes = new Map<string, THREE.Object3D>();
 
+    void Promise.all(PRELOAD_ASSET_URLS.map((url) => loadBspGeometry(url))).catch(() => undefined);
+
     void populateScene(sceneRoot, scene.nodes).then((meshCount) => {
       if (!cancelled) {
         setRenderStats((current) => ({
@@ -313,6 +316,11 @@ export default function LevelViewport({
       syncPlayerMeshes(playerLayer, playerMeshes, currentSnapshot?.players ?? [], localPlayerIdRef.current);
 
       const liveLocalPlayer = currentSnapshot?.players.find((player) => player.id === localPlayerIdRef.current) ?? null;
+      if (liveLocalPlayer) {
+        const yawError = normalizeAngle(liveLocalPlayer.turretYaw - heading.current.yaw);
+        const yawCatchup = document.pointerLockElement === renderer.domElement ? 0.22 : 0.46;
+        heading.current.yaw = normalizeAngle(heading.current.yaw + yawError * yawCatchup);
+      }
       if (liveLocalPlayer && aimCallbackRef.current) {
         aimCallbackRef.current({
           aimYaw: THREE.MathUtils.clamp(normalizeAngle(heading.current.yaw - liveLocalPlayer.bodyYaw), -1.2, 1.2),
@@ -1008,7 +1016,7 @@ function createProjectileMarker(projectile: SnapshotProjectileState): THREE.Obje
         ? LIVE_ASSET_URLS.missile
         : LIVE_ASSET_URLS.grenade);
   const color = projectile.kind === "plasma"
-    ? "#ffe38f"
+    ? "#ff4a3a"
     : projectile.kind === "missile"
       ? "#ff9b67"
       : "#79ffad";
@@ -1019,9 +1027,9 @@ function createProjectileMarker(projectile: SnapshotProjectileState): THREE.Obje
     material: new THREE.MeshStandardMaterial({
       color,
       emissive: color,
-      emissiveIntensity: 0.22,
-      metalness: 0.08,
-      roughness: 0.46
+      emissiveIntensity: projectile.kind === "plasma" ? 0.45 : 0.22,
+      metalness: 0.04,
+      roughness: projectile.kind === "plasma" ? 0.24 : 0.46
     }),
     fallback: () => createFallbackProjectileMarker(projectile.kind)
   });
@@ -1029,14 +1037,37 @@ function createProjectileMarker(projectile: SnapshotProjectileState): THREE.Obje
 
 function createFallbackProjectileMarker(kind: SnapshotProjectileState["kind"]): THREE.Object3D {
   if (kind === "plasma") {
-    return new THREE.Mesh(
-      new THREE.CapsuleGeometry(0.18, 0.9, 6, 12),
-      new THREE.MeshStandardMaterial({
-        color: "#ffe38f",
-        emissive: "#ffd24b",
-        emissiveIntensity: 0.48
-      })
-    );
+    const root = new THREE.Group();
+    const bodyMaterial = new THREE.MeshStandardMaterial({
+      color: "#ff513d",
+      emissive: "#ff2a1a",
+      emissiveIntensity: 0.7,
+      metalness: 0.02,
+      roughness: 0.25
+    });
+    const finMaterial = new THREE.MeshStandardMaterial({
+      color: "#ffb07a",
+      emissive: "#ff4f25",
+      emissiveIntensity: 0.45,
+      metalness: 0.02,
+      roughness: 0.28
+    });
+
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.72, 8), bodyMaterial);
+    shaft.rotation.x = Math.PI / 2;
+    root.add(shaft);
+
+    const nose = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.36, 8), bodyMaterial);
+    nose.rotation.x = -Math.PI / 2;
+    nose.position.z = 0.5;
+    root.add(nose);
+
+    const leftFin = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.05, 0.2), finMaterial);
+    leftFin.position.set(0, 0.08, -0.14);
+    const rightFin = leftFin.clone();
+    rightFin.position.y = -0.08;
+    root.add(leftFin, rightFin);
+    return root;
   }
 
   return new THREE.Mesh(
