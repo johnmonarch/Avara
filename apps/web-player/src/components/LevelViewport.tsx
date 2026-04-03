@@ -15,6 +15,10 @@ interface LevelViewportProps {
   billboards: LevelBillboardAssignment[];
   snapshot: SnapshotPacket | null;
   localPlayerId?: string;
+  arenaState?: "preview" | "spawning" | "ready";
+  arenaActionLabel?: string;
+  arenaActionDetail?: string;
+  onArenaAction?: () => void;
   playerSettings: PlayerSettings;
   prototypeStatus: "idle" | "bootstrapping" | "live";
   onAimChange?: (aim: { aimYaw: number; aimPitch: number }) => void;
@@ -48,6 +52,10 @@ export default function LevelViewport({
   billboards,
   snapshot,
   localPlayerId,
+  arenaState = "preview",
+  arenaActionLabel,
+  arenaActionDetail,
+  onArenaAction,
   playerSettings,
   prototypeStatus,
   onAimChange,
@@ -191,7 +199,7 @@ export default function LevelViewport({
     threeScene.background = new THREE.Color(scene.environment.skyColors[0] ?? "#9bd7ff");
     threeScene.fog = new THREE.Fog(scene.environment.skyColors[1] ?? "#dbe8ff", 140, profile.fogFar);
 
-    const camera = new THREE.PerspectiveCamera(72, mount.clientWidth / mount.clientHeight, 0.1, 1000);
+    const camera = new THREE.PerspectiveCamera(64, mount.clientWidth / mount.clientHeight, 0.1, 1000);
 
     const ambient = new THREE.HemisphereLight(
       new THREE.Color(scene.environment.skyColors[0] ?? "#9bd7ff"),
@@ -308,17 +316,18 @@ export default function LevelViewport({
         ? { x: liveLocalPlayer.x, y: liveLocalPlayer.y, z: liveLocalPlayer.z }
         : spawnAnchor;
 
-      const chaseDistance = liveLocalPlayer?.alive ? 18 : 22;
-      const cameraHeight = liveLocalPlayer?.alive ? 8.5 : 11;
+      const chaseDistance = liveLocalPlayer?.alive ? 7.25 : 20;
+      const cameraHeight = liveLocalPlayer?.alive ? 3.4 : 10.5;
+      const lookDistance = liveLocalPlayer?.alive ? 5.8 : 10;
       camera.position.set(
         focus.x - Math.cos(heading.current.yaw) * chaseDistance,
-        focus.y + cameraHeight - heading.current.pitch * 8,
+        focus.y + cameraHeight - heading.current.pitch * (liveLocalPlayer?.alive ? 2.5 : 8),
         focus.z - Math.sin(heading.current.yaw) * chaseDistance
       );
       camera.lookAt(
-        focus.x + Math.cos(heading.current.yaw) * 10,
-        focus.y + 3.4 + heading.current.pitch * 5,
-        focus.z + Math.sin(heading.current.yaw) * 10
+        focus.x + Math.cos(heading.current.yaw) * lookDistance,
+        focus.y + (liveLocalPlayer?.alive ? 1.85 : 3.4) + heading.current.pitch * (liveLocalPlayer?.alive ? 2.4 : 5),
+        focus.z + Math.sin(heading.current.yaw) * lookDistance
       );
 
       renderer.render(threeScene, camera);
@@ -368,14 +377,35 @@ export default function LevelViewport({
   }
 
   function requestPointerLock() {
+    if (arenaState !== "ready") {
+      return;
+    }
     pointerLockTargetRef.current?.requestPointerLock();
   }
 
   return (
-    <div className="viewport-shell" onClick={!pointerLocked ? requestPointerLock : undefined}>
+    <div className="viewport-shell" onClick={!pointerLocked && arenaState === "ready" ? requestPointerLock : undefined}>
       <div className="viewport-canvas" ref={mountRef} />
 
-      {!pointerLocked ? (
+      {arenaState !== "ready" ? (
+        <div className="pointer-lock-overlay" role="status" aria-live="polite">
+          <div className="pointer-lock-card">
+            <span className="eyebrow">{arenaState === "spawning" ? "Joining Arena" : "Arena Preview"}</span>
+            <h3>{arenaState === "spawning" ? "Spawning Hector…" : "Spawn Hector to drive"}</h3>
+            <p>
+              {arenaActionDetail
+                ?? (arenaState === "spawning"
+                  ? "The room is connecting and the authoritative server is spawning your mech."
+                  : "Choose or create a room first. The current view is only the imported level preview." )}
+            </p>
+            {onArenaAction && arenaActionLabel ? (
+              <button className="primary-button" onClick={onArenaAction}>
+                {arenaActionLabel}
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : !pointerLocked ? (
         <div
           className="pointer-lock-overlay"
           role="button"

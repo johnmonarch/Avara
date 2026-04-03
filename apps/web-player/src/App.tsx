@@ -188,6 +188,23 @@ export function App() {
     ],
     [connectedRoom, pointerLocked, settingsDraft.controlPreset, settingsDraft.graphicsQuality]
   );
+  const arenaState = connectedRoom ? (localPlayer ? "ready" : "spawning") : "preview";
+  const arenaActionLabel = connectedRoom
+    ? undefined
+    : selectedRoom
+      ? "Join selected room"
+      : featuredLevel
+        ? "Create room and spawn Hector"
+        : undefined;
+  const arenaActionDetail = connectedRoom
+    ? localPlayer
+      ? undefined
+      : `Connected to ${connectedRoom.name}. Waiting for the room worker to hand you a spawned Hector.`
+    : selectedRoom
+      ? `Selected room ${selectedRoom.name} is loaded, but you are still looking at a level preview. Join the room to spawn into the match.`
+      : featuredLevel
+        ? `You are looking at the imported ${featuredLevel.title} geometry only. Create a room first to spawn a playable Hector.`
+        : "No imported level is active yet.";
 
   useEffect(() => {
     if (pointerLocked && connectedRoom && !onboardingDismissed) {
@@ -1131,6 +1148,22 @@ export function App() {
             billboards={billboards}
             snapshot={snapshot}
             localPlayerId={localPlayerId}
+            arenaState={arenaState}
+            arenaActionLabel={arenaActionLabel}
+            arenaActionDetail={arenaActionDetail}
+            onArenaAction={
+              connectedRoom
+                ? undefined
+                : selectedRoom
+                  ? () => {
+                      void handleJoinSelectedRoom();
+                    }
+                  : featuredLevel
+                    ? () => {
+                        void handleCreateRoom();
+                      }
+                    : undefined
+            }
             playerSettings={playerSettings}
             prototypeStatus={prototypeStatus}
             onAimChange={(aim) => {
