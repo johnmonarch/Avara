@@ -104,10 +104,11 @@ const GRENADE_MOUNT_OFFSET = { x: 0, y: -0.2, z: 0.95 };
 const WALKER_AIM_YAW_LIMIT = (120 * Math.PI) / 180;
 const WALKER_AIM_PITCH_MIN = (-30 * Math.PI) / 180;
 const WALKER_AIM_PITCH_MAX = (30 * Math.PI) / 180;
-const BSP_AVARA_A = {
-  shapeId: 102,
-  shapeKey: "bspAvaraA",
-  shapeAssetUrl: `${ROOT_BSP_CONTENT_PREFIX}/102.json`
+const DEFAULT_HECTOR_HULL = {
+  shapeId: 215,
+  shapeKey: "bspHullLight",
+  shapeAssetUrl: `${ROOT_BSP_CONTENT_PREFIX}/215.json`,
+  rideHeight: 0.2500038147554742
 };
 const BSP_PLASMA = {
   shapeId: 203,
@@ -2046,7 +2047,7 @@ function toSnapshotPlayer(room: RoomState) {
     respawnSeconds: player.alive ? 0 : Math.max(0, Math.ceil((player.respawnAtTick - room.tick) / tickRate)),
     scoutView: player.scoutView,
     scoutId: player.scoutId,
-    ...BSP_AVARA_A
+    ...DEFAULT_HECTOR_HULL
   });
 }
 

@@ -43,8 +43,17 @@ interface BspShapeData {
 interface BspRenderableData {
   groups: Array<{
     geometry: THREE.BufferGeometry;
+    baseToken?: string;
     baseColor?: string;
   }>;
+}
+
+interface MarkerPalette {
+  marker0: string;
+  marker1: string;
+  marker2: string;
+  marker3: string;
+  fallback: string;
 }
 
 const shapeCache = new Map<string, Promise<THREE.BufferGeometry>>();
@@ -54,7 +63,7 @@ const billboardTextureCache = new Map<string, Promise<THREE.Texture>>();
 const ROOT_BSP_CONTENT_PREFIX = "/content/rsrc/bsps";
 const LIVE_ASSET_URLS = {
   scout: `${ROOT_BSP_CONTENT_PREFIX}/220.json`,
-  hector: `${ROOT_BSP_CONTENT_PREFIX}/102.json`,
+  hector: `${ROOT_BSP_CONTENT_PREFIX}/215.json`,
   hectorHead: `${ROOT_BSP_CONTENT_PREFIX}/210.json`,
   hectorLegHigh: `${ROOT_BSP_CONTENT_PREFIX}/211.json`,
   hectorLegLow: `${ROOT_BSP_CONTENT_PREFIX}/212.json`,
@@ -69,6 +78,8 @@ const HECTOR_LEG_HIGH_LENGTH = 0.905;
 const HECTOR_LEG_LOW_LENGTH = 1.15;
 const HECTOR_VIEWPORT_HEIGHT = 0.35;
 const HECTOR_DEFAULT_STANCE = 1.7;
+const HECTOR_DEFAULT_RIDE_HEIGHT = 0.2500038147554742;
+const BSP_FORWARD_YAW_OFFSET = -Math.PI / 2;
 
 export default function LevelViewport({
   scene,
@@ -801,6 +812,7 @@ async function loadBspRenderable(url: string): Promise<BspRenderableData> {
         geometry.computeBoundingBox();
         return {
           geometry,
+          baseToken: extractMarkerIndex(data.materials?.[matIndex]?.base),
           baseColor: parseBspBaseColor(data.materials?.[matIndex]?.base)
         };
       })
@@ -828,6 +840,15 @@ function parseBspBaseColor(token: string | undefined): string | undefined {
     return token;
   }
   return undefined;
+}
+
+function extractMarkerIndex(token: string | undefined): string | undefined {
+  if (!token) {
+    return undefined;
+  }
+
+  const match = token.trim().match(/^marker\((\d)\)$/i);
+  return match ? `marker${match[1]}` : undefined;
 }
 
 function darkenHex(color: string, factor: number): string {
@@ -927,7 +948,7 @@ function syncScoutMeshes(
 }
 
 function createScoutMarker(scout: SnapshotScoutState, isLocalOwner: boolean): THREE.Object3D {
-  return createDynamicAssetMarker({
+  const root = createDynamicAssetMarker({
     shapeAssetUrl: scout.shapeAssetUrl ?? LIVE_ASSET_URLS.scout,
     scale: scout.scale ?? 1,
     material: new THREE.MeshStandardMaterial({
@@ -949,19 +970,23 @@ function createScoutMarker(scout: SnapshotScoutState, isLocalOwner: boolean): TH
         })
       )
   });
+  root.userData.baseYawOffset = BSP_FORWARD_YAW_OFFSET;
+  root.rotation.order = "YXZ";
+  return root;
 }
 
 function queueObjectTransform(object: THREE.Object3D, x: number, y: number, z: number, yaw: number): void {
+  const targetYaw = yaw + (object.userData.baseYawOffset ?? 0);
   if (object.userData.initializedTransform !== true) {
     object.position.set(x, y, z);
-    object.rotation.y = yaw;
+    object.rotation.y = targetYaw;
     object.userData.initializedTransform = true;
   }
 
   object.userData.targetX = x;
   object.userData.targetY = y;
   object.userData.targetZ = z;
-  object.userData.targetYaw = yaw;
+  object.userData.targetYaw = targetYaw;
 }
 
 function smoothDynamicObjects(
@@ -997,7 +1022,7 @@ function createPlayerMarker(player: SnapshotPlayerState, isLocal: boolean): THRE
     return createWalkerAssemblyMarker(player, isLocal);
   }
 
-  return createDynamicAssetMarker({
+  const root = createDynamicAssetMarker({
     shapeAssetUrl: player.shapeAssetUrl ?? LIVE_ASSET_URLS.hector,
     scale: player.scale ?? 1,
     grounded: true,
@@ -1008,11 +1033,18 @@ function createPlayerMarker(player: SnapshotPlayerState, isLocal: boolean): THRE
     }),
     fallback: () => createFallbackPlayerMarker(isLocal)
   });
+  root.userData.baseYawOffset = BSP_FORWARD_YAW_OFFSET;
+  root.rotation.order = "YXZ";
+  return root;
 }
 
 function isWalkerAssemblyPlayer(player: SnapshotPlayerState): boolean {
   return player.shapeKey === "bspAvaraA"
     || player.shapeId === 102
+    || player.shapeId === 210
+    || player.shapeId === 215
+    || player.shapeId === 216
+    || player.shapeId === 217
     || player.shapeAssetUrl === LIVE_ASSET_URLS.hector;
 }
 
@@ -1038,44 +1070,37 @@ function createWalkerAssemblyMarker(player: SnapshotPlayerState, isLocal: boolea
   root.userData.playerVisualKind = "walker";
   root.userData.walkerPhase = 0;
   root.userData.walkerPhaseAt = performance.now();
+  root.userData.baseYawOffset = BSP_FORWARD_YAW_OFFSET;
+  root.rotation.order = "YXZ";
 
-  const baseMaterial = new THREE.MeshStandardMaterial({
-    color: player.color ?? (isLocal ? "#d1a348" : "#7dbbff"),
-    metalness: 0.18,
-    roughness: 0.72
-  });
-  const accentMaterial = new THREE.MeshStandardMaterial({
-    color: player.accentColor ?? (isLocal ? "#f1df9e" : "#b6d5ff"),
-    metalness: 0.08,
-    roughness: 0.62
-  });
+  const palette = createWalkerPalette(player, isLocal);
 
-  const headPivot = new THREE.Group();
-  headPivot.name = "walker-head";
-  root.add(headPivot);
-  attachBspMesh(headPivot, LIVE_ASSET_URLS.hectorHead, accentMaterial);
+  const hullPivot = new THREE.Group();
+  hullPivot.name = "walker-hull";
+  root.add(hullPivot);
+  attachBspRenderable(hullPivot, player.shapeAssetUrl ?? LIVE_ASSET_URLS.hector, palette);
 
   const leftUpper = new THREE.Group();
   leftUpper.name = "walker-left-upper";
   root.add(leftUpper);
-  attachBspMesh(leftUpper, LIVE_ASSET_URLS.hectorLegHigh, baseMaterial);
+  attachBspRenderable(leftUpper, LIVE_ASSET_URLS.hectorLegHigh, palette);
 
   const rightUpper = new THREE.Group();
   rightUpper.name = "walker-right-upper";
   root.add(rightUpper);
-  attachBspMesh(rightUpper, LIVE_ASSET_URLS.hectorLegHigh, baseMaterial, {
+  attachBspRenderable(rightUpper, LIVE_ASSET_URLS.hectorLegHigh, palette, {
     preRotateY: Math.PI
   });
 
   const leftLower = new THREE.Group();
   leftLower.name = "walker-left-lower";
   leftUpper.add(leftLower);
-  attachBspMesh(leftLower, LIVE_ASSET_URLS.hectorLegLow, baseMaterial);
+  attachBspRenderable(leftLower, LIVE_ASSET_URLS.hectorLegLow, palette);
 
   const rightLower = new THREE.Group();
   rightLower.name = "walker-right-lower";
   rightUpper.add(rightLower);
-  attachBspMesh(rightLower, LIVE_ASSET_URLS.hectorLegLow, baseMaterial, {
+  attachBspRenderable(rightLower, LIVE_ASSET_URLS.hectorLegLow, palette, {
     preRotateY: Math.PI
   });
 
@@ -1101,11 +1126,13 @@ function updateWalkerAssemblyPose(root: THREE.Group, player: SnapshotPlayerState
   const crouch = player.crouch ?? 0;
   const hipHeight = Math.max(0.95, elevation - crouch);
   const yawDelta = normalizeAngle(player.turretYaw - player.bodyYaw);
+  const rideHeight = player.rideHeight ?? HECTOR_DEFAULT_RIDE_HEIGHT;
 
-  const head = root.getObjectByName("walker-head");
-  if (head) {
-    head.position.set(0, hipHeight + HECTOR_VIEWPORT_HEIGHT, 0);
-    head.rotation.set(-player.turretPitch, yawDelta, -yawDelta * 0.18);
+  const hull = root.getObjectByName("walker-hull");
+  if (hull) {
+    hull.position.set(0, hipHeight + rideHeight, 0);
+    hull.rotation.order = "YXZ";
+    hull.rotation.set(-player.turretPitch, yawDelta, -yawDelta / 6);
   }
 
   const turnBias = Math.max(-0.35, Math.min(0.35, (rightMotor - leftMotor) / 0.18));
@@ -1121,13 +1148,13 @@ function updateWalkerAssemblyPose(root: THREE.Group, player: SnapshotPlayerState
 
   const leftUpper = root.getObjectByName("walker-left-upper");
   if (leftUpper) {
-    leftUpper.position.set(-HECTOR_LEG_SPACE, hipHeight, 0);
+    leftUpper.position.set(HECTOR_LEG_SPACE, hipHeight, 0);
     leftUpper.rotation.set(leftPose.upperAngle, 0, 0);
   }
 
   const rightUpper = root.getObjectByName("walker-right-upper");
   if (rightUpper) {
-    rightUpper.position.set(HECTOR_LEG_SPACE, hipHeight, 0);
+    rightUpper.position.set(-HECTOR_LEG_SPACE, hipHeight, 0);
     rightUpper.rotation.set(rightPose.upperAngle, 0, 0);
   }
 
@@ -1173,6 +1200,101 @@ function solveWalkerLegPose(hipHeight: number, forwardOffset: number, lift: numb
   const upperAngle = Math.atan2(forwardOffset, -clampedTargetY) - upperReach;
   const lowerAngle = Math.PI - kneeInterior;
   return { upperAngle, lowerAngle };
+}
+
+function createWalkerPalette(player: SnapshotPlayerState, isLocal: boolean): MarkerPalette {
+  const hullColor = player.color ?? (isLocal ? "#7a5c25" : "#6f88b6");
+  return {
+    marker0: hullColor,
+    marker1: player.accentColor ?? darkenHex(hullColor, 0.08),
+    marker2: isLocal ? "#a7d8ff" : "#d2e4ff",
+    marker3: "#161616",
+    fallback: hullColor
+  };
+}
+
+function createProjectilePalette(kind: SnapshotProjectileState["kind"]): MarkerPalette {
+  if (kind === "plasma") {
+    return {
+      marker0: "#ff4a3a",
+      marker1: "#ff9b72",
+      marker2: "#ffceb6",
+      marker3: "#6a1208",
+      fallback: "#ff4a3a"
+    };
+  }
+
+  if (kind === "missile") {
+    return {
+      marker0: "#2b3acc",
+      marker1: "#dccf92",
+      marker2: "#8f9cff",
+      marker3: "#121525",
+      fallback: "#2b3acc"
+    };
+  }
+
+  return {
+    marker0: "#d8d542",
+    marker1: "#fff5aa",
+    marker2: "#ffd973",
+    marker3: "#302a11",
+    fallback: "#d8d542"
+  };
+}
+
+function resolveRenderableColor(
+  baseToken: string | undefined,
+  baseColor: string | undefined,
+  palette: MarkerPalette
+): string {
+  if (baseColor) {
+    return baseColor;
+  }
+
+  switch (baseToken) {
+    case "marker0":
+      return palette.marker0;
+    case "marker1":
+      return palette.marker1;
+    case "marker2":
+      return palette.marker2;
+    case "marker3":
+      return palette.marker3;
+    default:
+      return palette.fallback;
+  }
+}
+
+function attachBspRenderable(
+  root: THREE.Group,
+  url: string,
+  palette: MarkerPalette,
+  options?: { preRotateY?: number }
+): void {
+  void loadBspRenderable(url)
+    .then((renderable) => {
+      const group = new THREE.Group();
+      if (options?.preRotateY) {
+        group.rotation.y = options.preRotateY;
+      }
+
+      for (const part of renderable.groups) {
+        const color = resolveRenderableColor(part.baseToken, part.baseColor, palette);
+        const mesh = new THREE.Mesh(
+          part.geometry,
+          new THREE.MeshStandardMaterial({
+            color,
+            metalness: 0.14,
+            roughness: 0.66
+          })
+        );
+        group.add(mesh);
+      }
+
+      root.add(group);
+    })
+    .catch(() => undefined);
 }
 
 function attachBspMesh(
@@ -1262,6 +1384,8 @@ function createProjectileMarker(projectile: SnapshotProjectileState): THREE.Obje
 function createExactProjectileMarker(shapeAssetUrl: string, projectile: SnapshotProjectileState): THREE.Object3D {
   const fallback = createFallbackProjectileMarker(projectile.kind);
   const root = new THREE.Group();
+  root.userData.baseYawOffset = BSP_FORWARD_YAW_OFFSET;
+  root.rotation.order = "YXZ";
   root.add(fallback);
 
   const resolved = resolvedRenderableCache.get(shapeAssetUrl);
@@ -1290,10 +1414,10 @@ function buildRenderableGroup(
   scale: number
 ): THREE.Group {
   const group = new THREE.Group();
+  const palette = createProjectilePalette(kind);
 
   for (const part of renderable.groups) {
-    const color = part.baseColor
-      ?? (kind === "plasma" ? "#ff4a3a" : kind === "missile" ? "#7b68ff" : "#fffb00");
+    const color = resolveRenderableColor(part.baseToken, part.baseColor, palette);
     const material = new THREE.MeshStandardMaterial({
       color,
       emissive: kind === "plasma" ? color : darkenHex(color, 0.2),

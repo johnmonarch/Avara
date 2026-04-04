@@ -72,6 +72,7 @@ export interface SnapshotPlayerState {
   shapeKey?: string;
   shapeAssetUrl?: string;
   scale?: number;
+  rideHeight?: number;
   color?: string;
   accentColor?: string;
   scoutView?: boolean;
