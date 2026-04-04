@@ -10,6 +10,7 @@ import type {
 } from "@avara/shared-protocol";
 import type { GraphicsQuality, LevelBillboardAssignment, LevelScene, PlayerSettings, SceneNode } from "@avara/shared-types";
 import { CONTROL_PRESET_BINDINGS } from "@avara/shared-ui";
+import { resolveApiAssetUrl } from "../lib/api";
 
 interface LevelViewportProps {
   scene: LevelScene | null;
@@ -729,7 +730,7 @@ async function loadBspGeometry(url: string): Promise<THREE.BufferGeometry> {
   }
 
   const pending = (async () => {
-    const response = await fetch(url);
+    const response = await fetch(resolveApiAssetUrl(url));
     if (!response.ok) {
       throw new Error(`Failed to load BSP ${url}: ${response.status}`);
     }
@@ -772,7 +773,7 @@ async function loadBspRenderable(url: string): Promise<BspRenderableData> {
   }
 
   const pending = (async () => {
-    const response = await fetch(url);
+    const response = await fetch(resolveApiAssetUrl(url));
     if (!response.ok) {
       throw new Error(`Failed to load BSP ${url}: ${response.status}`);
     }

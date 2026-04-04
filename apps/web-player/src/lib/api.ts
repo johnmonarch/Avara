@@ -232,6 +232,27 @@ export async function fetchPrototypeSnapshot(room: Pick<RoomSummary, "id" | "gam
   return gameRequest<SnapshotPacket>(room.gameServerUrl, `/rooms/${encodeURIComponent(room.id)}/snapshot`);
 }
 
+export function resolveApiAssetUrl(assetUrl: string): string {
+  if (!assetUrl) {
+    return assetUrl;
+  }
+
+  try {
+    const parsed = new URL(assetUrl);
+    if (typeof window !== "undefined" && !isLocalHost(window.location.hostname) && isLocalHost(parsed.hostname)) {
+      const apiBase = new URL(API_BASE_URL);
+      parsed.protocol = apiBase.protocol;
+      parsed.host = apiBase.host;
+    }
+    return parsed.toString();
+  } catch {
+    if (assetUrl.startsWith("/")) {
+      return `${API_BASE_URL}${assetUrl}`;
+    }
+    return assetUrl;
+  }
+}
+
 export async function trackAdEvent(input: {
   campaignId: string;
   placementType: AdPlacementType;
