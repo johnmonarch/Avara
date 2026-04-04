@@ -1,4 +1,4 @@
-import type { SnapshotPacket } from "@avara/shared-protocol";
+import type { ScoutCommand, SnapshotPacket } from "@avara/shared-protocol";
 import type {
   AdCampaign,
   AdEventType,
@@ -28,6 +28,8 @@ export interface PrototypeInputState {
   loadGrenade: boolean;
   boost: boolean;
   crouchJump: boolean;
+  toggleScoutView?: boolean;
+  scoutCommand?: ScoutCommand | null;
 }
 
 export async function ensurePlayerProfile(): Promise<{ identity: Identity; settings: PlayerSettings }> {

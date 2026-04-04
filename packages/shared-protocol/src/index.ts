@@ -5,6 +5,7 @@ export const PROTOCOL_VERSION = 1;
 export type WeaponLoad = "cannon" | "missile" | "grenade";
 export type ProjectileKind = "plasma" | "missile" | "grenade";
 export type PickupKind = "missiles" | "grenades" | "mixed";
+export type ScoutCommand = "follow" | "lead" | "left" | "right" | "up" | "down";
 export type MatchEventType =
   | "spawn"
   | "damage"
@@ -34,6 +35,8 @@ export interface InputPacket {
   loadGrenade: boolean;
   boost: boolean;
   crouchJump: boolean;
+  toggleScoutView?: boolean;
+  scoutCommand?: ScoutCommand | null;
 }
 
 export interface SnapshotPlayerState {
@@ -65,6 +68,26 @@ export interface SnapshotPlayerState {
   gunEnergyLeft?: number;
   gunEnergyRight?: number;
   respawnSeconds: number;
+  shapeId?: number;
+  shapeKey?: string;
+  shapeAssetUrl?: string;
+  scale?: number;
+  color?: string;
+  accentColor?: string;
+  scoutView?: boolean;
+  scoutId?: string;
+}
+
+export interface SnapshotScoutState {
+  id: string;
+  ownerPlayerId: string;
+  x: number;
+  y: number;
+  z: number;
+  heading: number;
+  health: number;
+  active: boolean;
+  action: ScoutCommand | "inactive";
   shapeId?: number;
   shapeKey?: string;
   shapeAssetUrl?: string;
@@ -122,6 +145,7 @@ export interface SnapshotPacket {
   roomId: string;
   roomStatus: RoomStatus;
   players: SnapshotPlayerState[];
+  scouts: SnapshotScoutState[];
   projectiles: SnapshotProjectileState[];
   pickups: SnapshotPickupState[];
   events: MatchEventState[];

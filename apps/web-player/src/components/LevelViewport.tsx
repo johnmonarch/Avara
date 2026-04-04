@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 
 import type {
+  SnapshotScoutState,
   SnapshotPacket,
   SnapshotPickupState,
   SnapshotPlayerState,
@@ -34,13 +35,24 @@ interface LevelViewportProps {
 interface BspShapeData {
   points: [number, number, number][];
   normals: [number, number, number][];
-  polys: Array<{ normal: number; tris: number[] }>;
+  polys: Array<{ normal: number; tris: number[]; mat?: number }>;
+  materials?: Array<{ base?: string; spec?: string }>;
+}
+
+interface BspRenderableData {
+  groups: Array<{
+    geometry: THREE.BufferGeometry;
+    baseColor?: string;
+  }>;
 }
 
 const shapeCache = new Map<string, Promise<THREE.BufferGeometry>>();
+const shapeRenderableCache = new Map<string, Promise<BspRenderableData>>();
+const resolvedRenderableCache = new Map<string, BspRenderableData>();
 const billboardTextureCache = new Map<string, Promise<THREE.Texture>>();
 const ROOT_BSP_CONTENT_PREFIX = "/content/rsrc/bsps";
 const LIVE_ASSET_URLS = {
+  scout: `${ROOT_BSP_CONTENT_PREFIX}/220.json`,
   hector: `${ROOT_BSP_CONTENT_PREFIX}/102.json`,
   hectorHead: `${ROOT_BSP_CONTENT_PREFIX}/210.json`,
   hectorLegHigh: `${ROOT_BSP_CONTENT_PREFIX}/211.json`,
@@ -50,6 +62,7 @@ const LIVE_ASSET_URLS = {
   grenade: `${ROOT_BSP_CONTENT_PREFIX}/820.json`
 } as const;
 const PRELOAD_ASSET_URLS = Object.values(LIVE_ASSET_URLS);
+const SCOUT_CAMERA_OFFSET = 0.1;
 const HECTOR_LEG_SPACE = 0.6;
 const HECTOR_LEG_HIGH_LENGTH = 0.905;
 const HECTOR_LEG_LOW_LENGTH = 1.15;
@@ -130,6 +143,15 @@ export default function LevelViewport({
   const localPlayer = useMemo(
     () => snapshot?.players.find((player) => player.id === localPlayerId) ?? null,
     [localPlayerId, snapshot]
+  );
+  const localScout = useMemo(
+    () => {
+      if (!snapshot || !localPlayer) {
+        return null;
+      }
+      return snapshot.scouts.find((scout) => scout.ownerPlayerId === localPlayer.id) ?? null;
+    },
+    [localPlayer, snapshot]
   );
 
   const leaderboard = useMemo(
@@ -239,16 +261,20 @@ export default function LevelViewport({
     const billboardLayer = new THREE.Group();
     const pickupLayer = new THREE.Group();
     const projectileLayer = new THREE.Group();
+    const scoutLayer = new THREE.Group();
     const playerLayer = new THREE.Group();
-    threeScene.add(billboardLayer, pickupLayer, projectileLayer, playerLayer);
+    threeScene.add(billboardLayer, pickupLayer, projectileLayer, scoutLayer, playerLayer);
 
     const billboardNodes = scene.nodes.filter((node) => node.type === "ad_placeholder" && node.slotId);
     const billboardMeshes = new Map<string, THREE.Group>();
     const pickupMeshes = new Map<string, THREE.Object3D>();
     const projectileMeshes = new Map<string, THREE.Object3D>();
+    const scoutMeshes = new Map<string, THREE.Object3D>();
     const playerMeshes = new Map<string, THREE.Object3D>();
 
-    void Promise.all(PRELOAD_ASSET_URLS.map((url) => loadBspGeometry(url))).catch(() => undefined);
+    void Promise.all(
+      PRELOAD_ASSET_URLS.flatMap((url) => [loadBspGeometry(url), loadBspRenderable(url)])
+    ).catch(() => undefined);
 
     void populateScene(sceneRoot, scene.nodes).then((meshCount) => {
       if (!cancelled) {
@@ -297,6 +323,7 @@ export default function LevelViewport({
     renderer.domElement.addEventListener("click", onClick);
 
     let sampleStart = performance.now();
+    let lastFrameAt = sampleStart;
     let framesSinceSample = 0;
 
     const animate = () => {
@@ -310,12 +337,21 @@ export default function LevelViewport({
       }
 
       const currentSnapshot = snapshotRef.current;
+      const now = performance.now();
+      const frameDelta = Math.min(0.05, Math.max(0.001, (now - lastFrameAt) / 1000));
+      lastFrameAt = now;
+
       syncBillboardMeshes(billboardLayer, billboardMeshes, billboardNodes, billboardRef.current);
       syncPickupMeshes(pickupLayer, pickupMeshes, currentSnapshot?.pickups ?? []);
       syncProjectileMeshes(projectileLayer, projectileMeshes, currentSnapshot?.projectiles ?? []);
+      syncScoutMeshes(scoutLayer, scoutMeshes, currentSnapshot?.scouts ?? [], localPlayerIdRef.current);
       syncPlayerMeshes(playerLayer, playerMeshes, currentSnapshot?.players ?? [], localPlayerIdRef.current);
+      smoothDynamicObjects(playerMeshes, frameDelta);
+      smoothDynamicObjects(scoutMeshes, frameDelta);
+      smoothDynamicObjects(projectileMeshes, frameDelta, 0.82);
 
       const liveLocalPlayer = currentSnapshot?.players.find((player) => player.id === localPlayerIdRef.current) ?? null;
+      const liveLocalScout = currentSnapshot?.scouts.find((scout) => scout.ownerPlayerId === localPlayerIdRef.current) ?? null;
       if (liveLocalPlayer) {
         const yawError = normalizeAngle(liveLocalPlayer.turretYaw - heading.current.yaw);
         const yawCatchup = document.pointerLockElement === renderer.domElement ? 0.22 : 0.46;
@@ -328,28 +364,48 @@ export default function LevelViewport({
         });
       }
 
-      const focus = liveLocalPlayer
-        ? { x: liveLocalPlayer.x, y: liveLocalPlayer.y, z: liveLocalPlayer.z }
-        : spawnAnchor;
+      const localPlayerObject = localPlayerIdRef.current ? playerMeshes.get(localPlayerIdRef.current) ?? null : null;
+      const localScoutObject = liveLocalScout ? scoutMeshes.get(liveLocalScout.id) ?? null : null;
+      const focus = localPlayerObject
+        ? { x: localPlayerObject.position.x, y: localPlayerObject.position.y, z: localPlayerObject.position.z }
+        : liveLocalPlayer
+          ? { x: liveLocalPlayer.x, y: liveLocalPlayer.y, z: liveLocalPlayer.z }
+          : spawnAnchor;
+      const scoutViewActive = Boolean(liveLocalPlayer?.alive && liveLocalPlayer?.scoutView && liveLocalScout?.active);
 
-      const chaseDistance = liveLocalPlayer?.alive ? 7.25 : 20;
-      const cameraHeight = liveLocalPlayer?.alive ? 3.4 : 10.5;
-      const lookDistance = liveLocalPlayer?.alive ? 5.8 : 10;
-      camera.position.set(
-        focus.x - Math.cos(heading.current.yaw) * chaseDistance,
-        focus.y + cameraHeight - heading.current.pitch * (liveLocalPlayer?.alive ? 2.5 : 8),
-        focus.z - Math.sin(heading.current.yaw) * chaseDistance
-      );
-      camera.lookAt(
-        focus.x + Math.cos(heading.current.yaw) * lookDistance,
-        focus.y + (liveLocalPlayer?.alive ? 1.85 : 3.4) + heading.current.pitch * (liveLocalPlayer?.alive ? 2.4 : 5),
-        focus.z + Math.sin(heading.current.yaw) * lookDistance
-      );
+      if (scoutViewActive && liveLocalPlayer && liveLocalScout) {
+        const scoutOrigin = localScoutObject
+          ? localScoutObject.position
+          : new THREE.Vector3(liveLocalScout.x, liveLocalScout.y, liveLocalScout.z);
+        camera.position.set(
+          scoutOrigin.x + SCOUT_CAMERA_OFFSET,
+          scoutOrigin.y + SCOUT_CAMERA_OFFSET,
+          scoutOrigin.z
+        );
+        camera.lookAt(
+          focus.x,
+          focus.y + getPlayerViewTargetHeight(liveLocalPlayer),
+          focus.z
+        );
+      } else {
+        const chaseDistance = liveLocalPlayer?.alive ? 7.25 : 20;
+        const cameraHeight = liveLocalPlayer?.alive ? 3.4 : 10.5;
+        const lookDistance = liveLocalPlayer?.alive ? 5.8 : 10;
+        camera.position.set(
+          focus.x - Math.cos(heading.current.yaw) * chaseDistance,
+          focus.y + cameraHeight - heading.current.pitch * (liveLocalPlayer?.alive ? 2.5 : 8),
+          focus.z - Math.sin(heading.current.yaw) * chaseDistance
+        );
+        camera.lookAt(
+          focus.x + Math.cos(heading.current.yaw) * lookDistance,
+          focus.y + (liveLocalPlayer?.alive ? 1.85 : 3.4) + heading.current.pitch * (liveLocalPlayer?.alive ? 2.4 : 5),
+          focus.z + Math.sin(heading.current.yaw) * lookDistance
+        );
+      }
 
       renderer.render(threeScene, camera);
 
       framesSinceSample += 1;
-      const now = performance.now();
       if (now - sampleStart >= 500) {
         const nextFps = Math.round((framesSinceSample * 1000) / (now - sampleStart));
         framesSinceSample = 0;
@@ -455,9 +511,11 @@ export default function LevelViewport({
           Billboards: {billboards.filter((billboard) => billboard.campaignId).length}/{billboards.length}
         </div>
         <div className="hud-pill">Players: {snapshot?.players.length ?? 0}</div>
+        <div className="hud-pill">Scouts: {snapshot?.scouts.length ?? 0}</div>
         <div className="hud-pill">Match: {snapshot?.roomStatus ?? prototypeStatus}</div>
         <div className="hud-pill">Render: {playerSettings.graphicsQuality}</div>
         {snapshot ? <div className="hud-pill">{snapshot.remainingSeconds}s left</div> : null}
+        {localPlayer?.scoutView ? <div className="hud-pill">Scout view</div> : null}
         {playerSettings.showPerformanceHud ? (
           <>
             <div className="hud-pill">FPS: {renderStats.fps ?? "…"}</div>
@@ -499,6 +557,12 @@ export default function LevelViewport({
                 {localPlayer.kills} / {localPlayer.deaths}
               </strong>
             </div>
+            {localScout ? (
+              <div className="hud-row">
+                <span>Scout</span>
+                <strong>{localScout.health}</strong>
+              </div>
+            ) : null}
             {!localPlayer.alive ? (
               <div className="respawn-banner">Respawning in {localPlayer.respawnSeconds}s</div>
             ) : null}
@@ -701,6 +765,84 @@ async function loadBspGeometry(url: string): Promise<THREE.BufferGeometry> {
   }
 }
 
+async function loadBspRenderable(url: string): Promise<BspRenderableData> {
+  const cached = shapeRenderableCache.get(url);
+  if (cached) {
+    return cached;
+  }
+
+  const pending = (async () => {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to load BSP ${url}: ${response.status}`);
+    }
+
+    const data = (await response.json()) as BspShapeData;
+    const groups = new Map<number, { positions: number[]; normals: number[] }>();
+
+    for (const poly of data.polys) {
+      const group = groups.get(poly.mat ?? 0) ?? { positions: [], normals: [] };
+      groups.set(poly.mat ?? 0, group);
+      for (let index = 0; index < poly.tris.length; index += 1) {
+        const point = data.points[poly.tris[index]];
+        const normal = data.normals[poly.normal] ?? [0, 1, 0];
+        group.positions.push(point[0], point[1], point[2]);
+        group.normals.push(normal[0], normal[1], normal[2]);
+      }
+    }
+
+    const renderable: BspRenderableData = {
+      groups: Array.from(groups.entries()).map(([matIndex, group]) => {
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute("position", new THREE.Float32BufferAttribute(group.positions, 3));
+        geometry.setAttribute("normal", new THREE.Float32BufferAttribute(group.normals, 3));
+        geometry.computeBoundingSphere();
+        geometry.computeBoundingBox();
+        return {
+          geometry,
+          baseColor: parseBspBaseColor(data.materials?.[matIndex]?.base)
+        };
+      })
+    };
+    resolvedRenderableCache.set(url, renderable);
+    return renderable;
+  })();
+
+  shapeRenderableCache.set(url, pending);
+
+  try {
+    return await pending;
+  } catch (error) {
+    shapeRenderableCache.delete(url);
+    resolvedRenderableCache.delete(url);
+    throw error;
+  }
+}
+
+function parseBspBaseColor(token: string | undefined): string | undefined {
+  if (!token) {
+    return undefined;
+  }
+  if (token.startsWith("#")) {
+    return token;
+  }
+  return undefined;
+}
+
+function darkenHex(color: string, factor: number): string {
+  const normalized = color.startsWith("#") ? color.slice(1) : color;
+  if (normalized.length !== 6) {
+    return color;
+  }
+
+  const channel = (offset: number) =>
+    Math.max(0, Math.min(255, Math.round(parseInt(normalized.slice(offset, offset + 2), 16) * (1 - factor))));
+
+  return `#${channel(0).toString(16).padStart(2, "0")}${channel(2).toString(16).padStart(2, "0")}${channel(4)
+    .toString(16)
+    .padStart(2, "0")}`;
+}
+
 function inferColor(node: SceneNode): string {
   switch (node.type) {
     case "spawn":
@@ -743,8 +885,7 @@ function syncPlayerMeshes(
     }
 
     object.visible = player.alive;
-    object.position.set(player.x, player.y, player.z);
-    object.rotation.y = player.bodyYaw;
+    queueObjectTransform(object, player.x, player.y, player.z, player.bodyYaw);
     updatePlayerMarker(object, player);
   }
 
@@ -752,6 +893,100 @@ function syncPlayerMeshes(
     if (!liveIds.has(playerId)) {
       layer.remove(object);
       cache.delete(playerId);
+    }
+  }
+}
+
+function syncScoutMeshes(
+  layer: THREE.Group,
+  cache: Map<string, THREE.Object3D>,
+  scouts: SnapshotScoutState[],
+  localPlayerId?: string
+): void {
+  const liveIds = new Set(scouts.map((scout) => scout.id));
+
+  for (const scout of scouts) {
+    let object = cache.get(scout.id);
+    if (!object) {
+      object = createScoutMarker(scout, scout.ownerPlayerId === localPlayerId);
+      cache.set(scout.id, object);
+      layer.add(object);
+    }
+
+    object.visible = scout.active;
+    queueObjectTransform(object, scout.x, scout.y, scout.z, scout.heading);
+  }
+
+  for (const [scoutId, object] of cache.entries()) {
+    if (!liveIds.has(scoutId)) {
+      layer.remove(object);
+      cache.delete(scoutId);
+    }
+  }
+}
+
+function createScoutMarker(scout: SnapshotScoutState, isLocalOwner: boolean): THREE.Object3D {
+  return createDynamicAssetMarker({
+    shapeAssetUrl: scout.shapeAssetUrl ?? LIVE_ASSET_URLS.scout,
+    scale: scout.scale ?? 1,
+    material: new THREE.MeshStandardMaterial({
+      color: scout.color ?? (isLocalOwner ? "#84b7ff" : "#6f6f7d"),
+      emissive: scout.accentColor ?? (isLocalOwner ? "#d1e4ff" : "#a8a7bf"),
+      emissiveIntensity: 0.12,
+      metalness: 0.1,
+      roughness: 0.45
+    }),
+    fallback: () =>
+      new THREE.Mesh(
+        new THREE.SphereGeometry(0.8, 16, 16),
+        new THREE.MeshStandardMaterial({
+          color: isLocalOwner ? "#84b7ff" : "#8e8d98",
+          emissive: isLocalOwner ? "#c7dbff" : "#b9b7cf",
+          emissiveIntensity: 0.18,
+          metalness: 0.1,
+          roughness: 0.38
+        })
+      )
+  });
+}
+
+function queueObjectTransform(object: THREE.Object3D, x: number, y: number, z: number, yaw: number): void {
+  if (object.userData.initializedTransform !== true) {
+    object.position.set(x, y, z);
+    object.rotation.y = yaw;
+    object.userData.initializedTransform = true;
+  }
+
+  object.userData.targetX = x;
+  object.userData.targetY = y;
+  object.userData.targetZ = z;
+  object.userData.targetYaw = yaw;
+}
+
+function smoothDynamicObjects(
+  cache: Map<string, THREE.Object3D>,
+  frameDelta: number,
+  responsiveness = 0.72
+): void {
+  const blend = 1 - Math.pow(1 - responsiveness, Math.min(3, frameDelta * 60));
+  for (const object of cache.values()) {
+    const targetX = object.userData.targetX;
+    const targetY = object.userData.targetY;
+    const targetZ = object.userData.targetZ;
+    if (typeof targetX === "number" && typeof targetY === "number" && typeof targetZ === "number") {
+      object.position.lerp(new THREE.Vector3(targetX, targetY, targetZ), blend);
+    }
+
+    if (typeof object.userData.targetYaw === "number") {
+      object.rotation.y = normalizeAngle(
+        object.rotation.y + normalizeAngle(object.userData.targetYaw - object.rotation.y) * blend
+      );
+    }
+    if (typeof object.userData.targetPitch === "number") {
+      object.rotation.x += (object.userData.targetPitch - object.rotation.x) * blend;
+    }
+    if (typeof object.userData.targetRoll === "number") {
+      object.rotation.z += (object.userData.targetRoll - object.rotation.z) * blend;
     }
   }
 }
@@ -908,6 +1143,10 @@ function updateWalkerAssemblyPose(root: THREE.Group, player: SnapshotPlayerState
   }
 }
 
+function getPlayerViewTargetHeight(player: SnapshotPlayerState): number {
+  return Math.max(1.85, (player.stance ?? HECTOR_DEFAULT_STANCE) + HECTOR_VIEWPORT_HEIGHT);
+}
+
 function solveWalkerLegPose(hipHeight: number, forwardOffset: number, lift: number): { upperAngle: number; lowerAngle: number } {
   const clampedTargetY = -(Math.max(0.25, hipHeight - lift));
   const distance = Math.min(
@@ -996,8 +1235,9 @@ function syncProjectileMeshes(
       layer.add(object);
     }
 
-    object.position.set(projectile.x, projectile.y, projectile.z);
-    object.rotation.set(-(projectile.pitch ?? 0), projectile.yaw ?? 0, projectile.roll ?? 0);
+    queueObjectTransform(object, projectile.x, projectile.y, projectile.z, projectile.yaw ?? 0);
+    object.userData.targetPitch = -(projectile.pitch ?? 0);
+    object.userData.targetRoll = projectile.roll ?? 0;
   }
 
   for (const [projectileId, object] of cache.entries()) {
@@ -1015,24 +1255,57 @@ function createProjectileMarker(projectile: SnapshotProjectileState): THREE.Obje
       : projectile.kind === "missile"
         ? LIVE_ASSET_URLS.missile
         : LIVE_ASSET_URLS.grenade);
-  const color = projectile.kind === "plasma"
-    ? "#ff4a3a"
-    : projectile.kind === "missile"
-      ? "#ff9b67"
-      : "#79ffad";
+  return createExactProjectileMarker(shapeAssetUrl, projectile);
+}
 
-  return createDynamicAssetMarker({
-    shapeAssetUrl,
-    scale: projectile.scale ?? 1,
-    material: new THREE.MeshStandardMaterial({
+function createExactProjectileMarker(shapeAssetUrl: string, projectile: SnapshotProjectileState): THREE.Object3D {
+  const fallback = createFallbackProjectileMarker(projectile.kind);
+  const root = new THREE.Group();
+  root.add(fallback);
+
+  const resolved = resolvedRenderableCache.get(shapeAssetUrl);
+  if (resolved) {
+    root.clear();
+    root.add(buildRenderableGroup(resolved, projectile.kind, projectile.scale ?? 1));
+    return root;
+  }
+
+  void loadBspRenderable(shapeAssetUrl)
+    .then((renderable) => {
+      root.clear();
+      root.add(buildRenderableGroup(renderable, projectile.kind, projectile.scale ?? 1));
+    })
+    .catch(() => {
+      root.clear();
+      root.add(fallback);
+    });
+
+  return root;
+}
+
+function buildRenderableGroup(
+  renderable: BspRenderableData,
+  kind: SnapshotProjectileState["kind"],
+  scale: number
+): THREE.Group {
+  const group = new THREE.Group();
+
+  for (const part of renderable.groups) {
+    const color = part.baseColor
+      ?? (kind === "plasma" ? "#ff4a3a" : kind === "missile" ? "#7b68ff" : "#fffb00");
+    const material = new THREE.MeshStandardMaterial({
       color,
-      emissive: color,
-      emissiveIntensity: projectile.kind === "plasma" ? 0.45 : 0.22,
-      metalness: 0.04,
-      roughness: projectile.kind === "plasma" ? 0.24 : 0.46
-    }),
-    fallback: () => createFallbackProjectileMarker(projectile.kind)
-  });
+      emissive: kind === "plasma" ? color : darkenHex(color, 0.2),
+      emissiveIntensity: kind === "plasma" ? 0.55 : kind === "missile" ? 0.18 : 0.12,
+      metalness: 0.06,
+      roughness: kind === "plasma" ? 0.2 : 0.42
+    });
+    const mesh = new THREE.Mesh(part.geometry, material);
+    mesh.scale.setScalar(scale);
+    group.add(mesh);
+  }
+
+  return group;
 }
 
 function createFallbackProjectileMarker(kind: SnapshotProjectileState["kind"]): THREE.Object3D {

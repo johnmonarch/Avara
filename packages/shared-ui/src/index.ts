@@ -27,7 +27,8 @@ export const CONTROL_PRESET_BINDINGS: Record<ControlPreset["id"], ControlBinding
     { action: "Load missile", keys: "Q" },
     { action: "Load grenade", keys: "E" },
     { action: "Booster", keys: "Left Shift" },
-    { action: "Crouch / jump", keys: "Space" }
+    { action: "Crouch / jump", keys: "Space" },
+    { action: "Scout camera", keys: "Tab" }
   ],
   modernized: [
     { action: "Drive", keys: "W / S or Up / Down" },
@@ -37,6 +38,7 @@ export const CONTROL_PRESET_BINDINGS: Record<ControlPreset["id"], ControlBinding
     { action: "Load missile", keys: "Q or F" },
     { action: "Load grenade", keys: "E or G" },
     { action: "Booster", keys: "Left Shift" },
+    { action: "Scout camera", keys: "Tab" },
     { action: "Context help", keys: "On-screen HUD" }
   ]
 };

@@ -14,9 +14,11 @@ import type {
   MatchEventState,
   PickupKind,
   ProjectileKind,
+  ScoutCommand,
   SnapshotPacket,
   SnapshotPickupState,
   SnapshotPlayerState,
+  SnapshotScoutState,
   SnapshotProjectileState,
   WeaponLoad
 } from "@avara/shared-protocol";
@@ -83,6 +85,17 @@ const SMART_MISSILE_FRICTION = 0.05;
 const SMART_MISSILE_TARGET_RANGE = 160;
 const SMART_MISSILE_EXPLODE_RANGE = 2;
 const PLASMA_SPIN_RADIANS = (17 * Math.PI) / 180;
+const SCOUT_TURN_SPEED = 0.3944;
+const SCOUT_SHIELD = 10;
+const SCOUT_FRICTION = 0.96;
+const SCOUT_ACCELERATION = 0.05;
+const SCOUT_SPEED = 0.1;
+const SCOUT_HEIGHT = 5;
+const SCOUT_CLOSE_RADIUS = 5;
+const SCOUT_VERY_CLOSE = 3;
+const SCOUT_FOLLOW_RADIUS = 10;
+const SCOUT_SPAWN_PLATFORM = 1.5;
+const SCOUT_COLLISION_RADIUS = 1.2;
 const GUN_MOUNT_OFFSET_X = 0.25;
 const GUN_MOUNT_OFFSET_Y = 0;
 const GUN_MOUNT_OFFSET_Z = 0.75;
@@ -110,6 +123,11 @@ const BSP_GRENADE = {
   shapeId: 820,
   shapeKey: "bspGrenade",
   shapeAssetUrl: `${ROOT_BSP_CONTENT_PREFIX}/820.json`
+};
+const BSP_SCOUT = {
+  shapeId: 220,
+  shapeKey: "bspScout",
+  shapeAssetUrl: `${ROOT_BSP_CONTENT_PREFIX}/220.json`
 };
 
 interface SpawnPoint {
@@ -245,6 +263,27 @@ interface PlayerInputState {
   loadGrenade: boolean;
   boost: boolean;
   crouchJump: boolean;
+  toggleScoutView?: boolean;
+  scoutCommand?: ScoutCommand | null;
+}
+
+interface ScoutState {
+  id: string;
+  ownerPlayerId: string;
+  ownerName: string;
+  x: number;
+  y: number;
+  z: number;
+  targetX: number;
+  targetY: number;
+  targetZ: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  heading: number;
+  health: number;
+  action: ScoutCommand | "inactive";
+  nextRotateFlag: boolean;
 }
 
 interface PlayerState {
@@ -286,6 +325,8 @@ interface PlayerState {
   jumpFlag: boolean;
   tractionFlag: boolean;
   oldTractionFlag: boolean;
+  scoutView: boolean;
+  scoutId?: string;
   lastSeenTick: number;
   input: PlayerInputState;
 }
@@ -304,6 +345,7 @@ interface RoomState {
   pickups: PickupState[];
   projectiles: ProjectileState[];
   players: Map<string, PlayerState>;
+  scouts: Map<string, ScoutState>;
   settings: LevelSimulationSettings;
   nextSpawnIndex: number;
   tick: number;
@@ -340,6 +382,7 @@ setInterval(() => {
     expireDisconnectedPlayers(room);
     processRespawns(room);
     simulatePlayers(room, dt);
+    simulateScouts(room, dt);
     processPickups(room);
     simulateProjectiles(room, dt);
     maybeCompleteMatchOnTime(room);
@@ -433,6 +476,12 @@ createServer(async (request, response) => {
       }
       player.displayName = displayName;
       player.lastSeenTick = room.tick;
+      if (player.scoutId) {
+        const scout = room.scouts.get(player.scoutId);
+        if (scout) {
+          scout.ownerName = displayName;
+        }
+      }
 
       if (room.status === "waiting" && room.players.size > 0) {
         room.status = "active";
@@ -455,6 +504,7 @@ createServer(async (request, response) => {
       const body = await readJsonBody(request);
       const playerId = asString(body?.playerId);
       if (playerId) {
+        removeScoutForPlayer(room, playerId);
         room.players.delete(playerId);
       }
 
@@ -496,7 +546,9 @@ createServer(async (request, response) => {
         loadMissile: Boolean(body?.loadMissile),
         loadGrenade: Boolean(body?.loadGrenade),
         boost: Boolean(body?.boost),
-        crouchJump: Boolean(body?.crouchJump)
+        crouchJump: Boolean(body?.crouchJump),
+        toggleScoutView: Boolean(body?.toggleScoutView),
+        scoutCommand: normalizeScoutCommand(body?.scoutCommand)
       };
 
       if (room.status === "active" && player.alive) {
@@ -508,6 +560,12 @@ createServer(async (request, response) => {
         }
         if (nextInput.primaryFire && !player.input.primaryFire) {
           fireWeapon(room, player);
+        }
+        if (nextInput.toggleScoutView) {
+          toggleScoutView(room, player);
+        }
+        if (nextInput.scoutCommand) {
+          issueScoutCommand(room, player, nextInput.scoutCommand);
         }
       }
 
@@ -585,6 +643,7 @@ async function createRoomState(roomId: string, scene: LevelScene, maxPlayers: nu
     pickups: derivePickups(scene.nodes),
     projectiles: [],
     players: new Map(),
+    scouts: new Map(),
     settings: scene.settings,
     nextSpawnIndex: 0,
     tick: 0,
@@ -651,6 +710,179 @@ function simulatePlayers(room: RoomState, dt: number): void {
 
     rechargePlayerSystems(player, room, fpsScale);
   }
+}
+
+function simulateScouts(room: RoomState, dt: number): void {
+  const fpsScale = dt / CLASSIC_FRAME_SECONDS;
+
+  for (const scout of room.scouts.values()) {
+    const owner = room.players.get(scout.ownerPlayerId);
+    if (!owner?.alive) {
+      removeScout(room, scout, false);
+      continue;
+    }
+
+    const oldX = scout.x;
+    const oldY = scout.y;
+    const oldZ = scout.z;
+    const oldHeading = scout.heading;
+
+    if (scout.nextRotateFlag) {
+      scout.heading = normalizeAngle(scout.heading + fpsCoefficient2(SCOUT_TURN_SPEED, fpsScale));
+    }
+
+    const scoutBaseHeight = getScoutBaseHeight(owner);
+    let distance = 0;
+
+    switch (scout.action) {
+      case "follow":
+        setScoutTargetAroundPlayer(scout, owner, scoutBaseHeight, "follow");
+        distance = moveScoutToTarget(scout, fpsScale);
+        break;
+      case "lead":
+        setScoutTargetAroundPlayer(scout, owner, scoutBaseHeight, "lead");
+        distance = moveScoutToTarget(scout, fpsScale);
+        break;
+      case "left":
+        setScoutTargetAroundPlayer(scout, owner, scoutBaseHeight, "left");
+        distance = moveScoutToTarget(scout, fpsScale);
+        break;
+      case "right":
+        setScoutTargetAroundPlayer(scout, owner, scoutBaseHeight, "right");
+        distance = moveScoutToTarget(scout, fpsScale);
+        break;
+      case "up":
+        distance = moveScoutToTarget(scout, fpsScale);
+        break;
+      case "down": {
+        const baseHeight = owner.y + scoutBaseHeight;
+        const horizontalDistance = Math.hypot(scout.x - owner.x, scout.z - owner.z);
+
+        if (horizontalDistance < SCOUT_CLOSE_RADIUS) {
+          if (horizontalDistance < SCOUT_VERY_CLOSE && baseHeight > scout.y) {
+            scout.targetX = scout.x;
+            scout.targetY = scout.y;
+            scout.targetZ = scout.z;
+            distance = Math.max(0, scout.y - baseHeight + horizontalDistance);
+            moveScoutToTarget(scout, fpsScale);
+          } else {
+            scout.targetX = owner.x;
+            scout.targetY = baseHeight;
+            scout.targetZ = owner.z;
+            distance = moveScoutToTarget(scout, fpsScale);
+          }
+        } else {
+          scout.targetX = owner.x;
+          scout.targetY = owner.y + scoutBaseHeight + SCOUT_HEIGHT;
+          scout.targetZ = owner.z;
+          distance = moveScoutToTarget(scout, fpsScale);
+        }
+
+        if (scout.y <= baseHeight + 0.2 && distance <= SCOUT_SPEED) {
+          removeScout(room, scout, true);
+          continue;
+        }
+        break;
+      }
+      case "inactive":
+      default:
+        break;
+    }
+
+    const blockerHit = findBlockerImpact(
+      room,
+      SCOUT_COLLISION_RADIUS,
+      { x: oldX, y: oldY, z: oldZ },
+      { x: scout.x, y: scout.y, z: scout.z }
+    );
+    const terrainHit = findTerrainImpact(
+      room,
+      SCOUT_COLLISION_RADIUS,
+      { x: oldX, y: oldY, z: oldZ },
+      { x: scout.x, y: scout.y, z: scout.z }
+    );
+
+    if (blockerHit || terrainHit) {
+      scout.x = oldX;
+      scout.y = oldY;
+      scout.z = oldZ;
+      scout.heading = oldHeading;
+      scout.nextRotateFlag = false;
+    } else {
+      scout.nextRotateFlag = true;
+      scout.x = clamp(scout.x, room.bounds.minX, room.bounds.maxX);
+      scout.z = clamp(scout.z, room.bounds.minZ, room.bounds.maxZ);
+      scout.y = Math.max(sampleFloorHeight(room, scout.x, scout.z, scout.y) + 0.2, scout.y);
+    }
+  }
+}
+
+function moveScoutToTarget(scout: ScoutState, fpsScale: number): number {
+  const deltaX = scout.targetX - scout.x;
+  const deltaY = scout.targetY - scout.y;
+  const deltaZ = scout.targetZ - scout.z;
+  const distance = Math.hypot(deltaX, deltaY, deltaZ);
+  let courseX = 0;
+  let courseY = 0;
+  let courseZ = 0;
+
+  if (distance < fpsCoefficient2(SCOUT_SPEED, fpsScale)) {
+    courseX = -scout.vx / 2;
+    courseY = -scout.vy / 2;
+    courseZ = -scout.vz / 2;
+  } else {
+    let correctedX = deltaX - scout.vx * 5;
+    let correctedY = deltaY - scout.vy * 5;
+    let correctedZ = deltaZ - scout.vz * 5;
+    const correctedLength = Math.hypot(correctedX, correctedY, correctedZ) || 1;
+    correctedX /= correctedLength;
+    correctedY /= correctedLength;
+    correctedZ /= correctedLength;
+    courseX = correctedX * SCOUT_ACCELERATION;
+    courseY = correctedY * SCOUT_ACCELERATION;
+    courseZ = correctedZ * SCOUT_ACCELERATION;
+  }
+
+  const scoutResponse = fpsCoefficients(SCOUT_FRICTION, SCOUT_FRICTION, fpsScale);
+  scout.vx = scout.vx * scoutResponse.coeff1 + courseX * scoutResponse.coeff2;
+  scout.vy = scout.vy * scoutResponse.coeff1 + courseY * scoutResponse.coeff2;
+  scout.vz = scout.vz * scoutResponse.coeff1 + courseZ * scoutResponse.coeff2;
+
+  scout.x += fpsCoefficient2(scout.vx, fpsScale);
+  scout.y += fpsCoefficient2(scout.vy, fpsScale);
+  scout.z += fpsCoefficient2(scout.vz, fpsScale);
+
+  return distance;
+}
+
+function setScoutTargetAroundPlayer(
+  scout: ScoutState,
+  player: PlayerState,
+  scoutBaseHeight: number,
+  mode: Exclude<ScoutCommand, "up" | "down">
+): void {
+  scout.targetX = player.x;
+  scout.targetY = player.y + scoutBaseHeight + SCOUT_HEIGHT;
+  scout.targetZ = player.z;
+
+  if (mode === "follow") {
+    scout.targetX -= Math.sin(player.bodyYaw) * SCOUT_FOLLOW_RADIUS;
+    scout.targetZ -= Math.cos(player.bodyYaw) * SCOUT_FOLLOW_RADIUS;
+    return;
+  }
+  if (mode === "lead") {
+    scout.targetX += Math.sin(player.bodyYaw) * (SCOUT_FOLLOW_RADIUS + 5);
+    scout.targetZ += Math.cos(player.bodyYaw) * (SCOUT_FOLLOW_RADIUS + 5);
+    return;
+  }
+  if (mode === "left") {
+    scout.targetX += Math.cos(player.bodyYaw) * SCOUT_FOLLOW_RADIUS;
+    scout.targetZ -= Math.sin(player.bodyYaw) * SCOUT_FOLLOW_RADIUS;
+    return;
+  }
+
+  scout.targetX -= Math.cos(player.bodyYaw) * SCOUT_FOLLOW_RADIUS;
+  scout.targetZ += Math.sin(player.bodyYaw) * SCOUT_FOLLOW_RADIUS;
 }
 
 function simulateWalkerJump(room: RoomState, player: PlayerState, fpsScale: number): void {
@@ -891,12 +1123,106 @@ function processRespawns(room: RoomState): void {
   }
 }
 
+function toggleScoutView(room: RoomState, player: PlayerState): void {
+  if (!player.scoutView && (!player.scoutId || !room.scouts.has(player.scoutId))) {
+    issueScoutCommand(room, player, "follow");
+  }
+
+  player.scoutView = !player.scoutView;
+
+  if (player.scoutView && (!player.scoutId || !room.scouts.has(player.scoutId))) {
+    player.scoutView = false;
+  }
+}
+
+function issueScoutCommand(room: RoomState, player: PlayerState, command: ScoutCommand): void {
+  const existingScout = player.scoutId ? room.scouts.get(player.scoutId) : undefined;
+  if (!existingScout) {
+    if (command === "down") {
+      return;
+    }
+
+    const spawnedScout = spawnScout(room, player, command);
+    if (spawnedScout) {
+      room.scouts.set(spawnedScout.id, spawnedScout);
+      player.scoutId = spawnedScout.id;
+    }
+    return;
+  }
+
+  existingScout.action = command;
+}
+
+function spawnScout(room: RoomState, player: PlayerState, command: ScoutCommand): ScoutState | null {
+  const scoutBaseHeight = getScoutBaseHeight(player);
+  const spawnY = player.y + scoutBaseHeight;
+  const spawnState: ScoutState = {
+    id: `scout_${crypto.randomUUID()}`,
+    ownerPlayerId: player.id,
+    ownerName: player.displayName,
+    x: player.x,
+    y: spawnY,
+    z: player.z,
+    targetX: player.x,
+    targetY: player.y + scoutBaseHeight + SCOUT_HEIGHT,
+    targetZ: player.z,
+    vx: player.vx,
+    vy: player.vy,
+    vz: player.vz,
+    heading: 0,
+    health: SCOUT_SHIELD,
+    action: command,
+    nextRotateFlag: true
+  };
+
+  const spawnBlocked = findBlockerImpact(
+    room,
+    SCOUT_COLLISION_RADIUS,
+    { x: spawnState.x, y: spawnState.y, z: spawnState.z },
+    { x: spawnState.x, y: spawnState.y, z: spawnState.z }
+  );
+  if (spawnBlocked) {
+    return null;
+  }
+
+  return spawnState;
+}
+
+function removeScoutForPlayer(room: RoomState, playerId: string): void {
+  for (const scout of room.scouts.values()) {
+    if (scout.ownerPlayerId === playerId) {
+      removeScout(room, scout, false);
+      break;
+    }
+  }
+}
+
+function removeScout(room: RoomState, scout: ScoutState, forceViewOff: boolean): void {
+  room.scouts.delete(scout.id);
+  const owner = room.players.get(scout.ownerPlayerId);
+  if (!owner) {
+    return;
+  }
+
+  if (owner.scoutId === scout.id) {
+    owner.scoutId = undefined;
+  }
+  if (forceViewOff || owner.scoutView) {
+    owner.scoutView = false;
+  }
+}
+
+function getScoutBaseHeight(player: PlayerState): number {
+  return (player.stance || HECTOR_DEFAULT_STANCE) + SCOUT_SPAWN_PLATFORM;
+}
+
 function expireDisconnectedPlayers(room: RoomState): void {
   for (const [playerId, player] of room.players.entries()) {
     if (room.tick - player.lastSeenTick <= DISCONNECT_GRACE_TICKS) {
       continue;
     }
 
+    removeScoutForPlayer(room, playerId);
     room.players.delete(playerId);
     addEvent(room, {
       event: "respawn",
@@ -1138,6 +1464,8 @@ function simulateProjectiles(room: RoomState, _dt: number): void {
       projectile.z = impact.z;
       if (impact.player && projectile.kind === "plasma" && projectile.directDamage > 0) {
         applyDamage(room, impact.player, projectile.directDamage, room.players.get(projectile.ownerId) ?? null);
+      } else if (impact.scout && projectile.kind === "plasma" && projectile.directDamage > 0) {
+        applyScoutDamage(room, impact.scout, projectile.directDamage, room.players.get(projectile.ownerId) ?? null);
       } else if (projectile.kind !== "plasma") {
         explodeProjectile(room, projectile);
       }
@@ -1239,9 +1567,9 @@ function findProjectileImpact(
   projectile: ProjectileState,
   start: { x: number; y: number; z: number },
   end: { x: number; y: number; z: number }
-): { x: number; y: number; z: number; player?: PlayerState } | null {
+): { x: number; y: number; z: number; player?: PlayerState; scout?: ScoutState } | null {
   let bestT = Number.POSITIVE_INFINITY;
-  let best: { x: number; y: number; z: number; player?: PlayerState } | null = null;
+  let best: { x: number; y: number; z: number; player?: PlayerState; scout?: ScoutState } | null = null;
 
   const blockerHit = findBlockerImpact(room, projectile.collisionRadius, start, end);
   if (blockerHit && blockerHit.t < bestT) {
@@ -1259,6 +1587,12 @@ function findProjectileImpact(
   if (playerHit && playerHit.t < bestT) {
     bestT = playerHit.t;
     best = playerHit.point;
+  }
+
+  const scoutHit = findScoutImpact(room, projectile, start, end);
+  if (scoutHit && scoutHit.t < bestT) {
+    bestT = scoutHit.t;
+    best = scoutHit.point;
   }
 
   return best;
@@ -1414,6 +1748,52 @@ function findPlayerImpact(
   return best;
 }
 
+function findScoutImpact(
+  room: RoomState,
+  projectile: ProjectileState,
+  start: { x: number; y: number; z: number },
+  end: { x: number; y: number; z: number }
+): { t: number; point: { x: number; y: number; z: number; scout?: ScoutState } } | null {
+  let best: { t: number; point: { x: number; y: number; z: number; scout?: ScoutState } } | null = null;
+
+  for (const scout of room.scouts.values()) {
+    if (scout.ownerPlayerId === projectile.ownerId) {
+      if (projectile.kind === "plasma") {
+        continue;
+      }
+      if (projectile.hostGraceTicks > 0) {
+        continue;
+      }
+    }
+
+    const t = segmentSphereIntersectionT(
+      start,
+      end,
+      { x: scout.x, y: scout.y, z: scout.z },
+      SCOUT_COLLISION_RADIUS + projectile.collisionRadius
+    );
+
+    if (t === null) {
+      continue;
+    }
+
+    const point = lerpPoint3(start, end, t);
+    if (!best || t < best.t) {
+      best = {
+        t,
+        point: {
+          x: point.x,
+          y: point.y,
+          z: point.z,
+          scout
+        }
+      };
+    }
+  }
+
+  return best;
+}
+
 function findTargetInCone(
   room: RoomState,
   origin: { x: number; y: number; z: number },
@@ -1489,6 +1869,48 @@ function explodeProjectile(room: RoomState, projectile: ProjectileState): void {
       applyDamage(room, player, shieldUnitsToHealth(blastEnergy), owner ?? null);
     }
   }
+
+  for (const scout of room.scouts.values()) {
+    const distance = Math.max(1, Math.hypot(scout.x - projectile.x, scout.y - projectile.y, scout.z - projectile.z) - SCOUT_COLLISION_RADIUS);
+    if (distance > blastRadius) {
+      continue;
+    }
+
+    const blastEnergy = projectile.blastPower / (distance * distance);
+    if (blastEnergy > 1 / 64) {
+      applyScoutDamage(room, scout, shieldUnitsToHealth(blastEnergy), owner ?? null);
+    }
+  }
+}
+
+function applyScoutDamage(room: RoomState, target: ScoutState, amount: number, attacker: PlayerState | null): void {
+  if (amount <= 0) {
+    return;
+  }
+
+  target.health = Math.max(0, target.health - amount);
+  addEvent(room, {
+    event: "damage",
+    actorPlayerId: attacker?.id,
+    targetPlayerId: target.ownerPlayerId,
+    message: attacker
+      ? `${attacker.displayName} hit ${target.ownerName}'s scout for ${amount}`
+      : `${target.ownerName}'s scout took ${amount} damage`
+  });
+
+  if (target.health > 0) {
+    return;
+  }
+
+  addEvent(room, {
+    event: "damage",
+    actorPlayerId: attacker?.id,
+    targetPlayerId: target.ownerPlayerId,
+    message: attacker
+      ? `${attacker.displayName} destroyed ${target.ownerName}'s scout`
+      : `${target.ownerName}'s scout was destroyed`
+  });
+  removeScout(room, target, true);
 }
 
 function applyDamage(room: RoomState, target: PlayerState, amount: number, attacker: PlayerState | null): void {
@@ -1514,6 +1936,7 @@ function applyDamage(room: RoomState, target: PlayerState, amount: number, attac
   target.weaponLoad = "cannon";
   target.respawnAtTick = room.tick + RESPAWN_TICKS;
   target.input = emptyInput();
+  removeScoutForPlayer(room, target.id);
 
   if (attacker && attacker.id !== target.id) {
     attacker.kills += 1;
@@ -1561,7 +1984,10 @@ function endMatch(room: RoomState, winnerPlayerId: string | undefined, message: 
   room.status = "ended";
   room.winnerPlayerId = winnerPlayerId;
   room.projectiles = [];
+  room.scouts.clear();
   for (const player of room.players.values()) {
+    player.scoutView = false;
+    player.scoutId = undefined;
     player.input = emptyInput();
   }
   addEvent(room, {
@@ -1578,6 +2004,7 @@ function buildSnapshot(room: RoomState): SnapshotPacket {
     roomId: room.id,
     roomStatus: room.status,
     players: Array.from(room.players.values()).map(toSnapshotPlayer(room)),
+    scouts: Array.from(room.scouts.values()).map(toSnapshotScout),
     projectiles: room.projectiles.map(toSnapshotProjectile),
     pickups: room.pickups.map(toSnapshotPickup(room)),
     events: room.events.slice(-8),
@@ -1617,8 +2044,25 @@ function toSnapshotPlayer(room: RoomState) {
     gunEnergyLeft: player.gunEnergyLeft,
     gunEnergyRight: player.gunEnergyRight,
     respawnSeconds: player.alive ? 0 : Math.max(0, Math.ceil((player.respawnAtTick - room.tick) / tickRate)),
+    scoutView: player.scoutView,
+    scoutId: player.scoutId,
     ...BSP_AVARA_A
   });
+}
+
+function toSnapshotScout(scout: ScoutState): SnapshotScoutState {
+  return {
+    id: scout.id,
+    ownerPlayerId: scout.ownerPlayerId,
+    x: scout.x,
+    y: scout.y,
+    z: scout.z,
+    heading: scout.heading,
+    health: scout.health,
+    active: scout.action !== "inactive",
+    action: scout.action,
+    ...BSP_SCOUT
+  };
 }
 
 function toSnapshotProjectile(projectile: ProjectileState): SnapshotProjectileState {
@@ -1706,6 +2150,8 @@ function spawnFreshPlayer(
     jumpFlag: false,
     tractionFlag: true,
     oldTractionFlag: true,
+    scoutView: false,
+    scoutId: undefined,
     lastSeenTick: room.tick,
     input: emptyInput()
   };
@@ -2179,7 +2625,9 @@ function emptyInput(): PlayerInputState {
     loadMissile: false,
     loadGrenade: false,
     boost: false,
-    crouchJump: false
+    crouchJump: false,
+    toggleScoutView: false,
+    scoutCommand: null
   };
 }
 
@@ -2759,6 +3207,20 @@ function asNumber(value: unknown): number | undefined {
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function normalizeScoutCommand(value: unknown): ScoutCommand | null {
+  switch (value) {
+    case "follow":
+    case "lead":
+    case "left":
+    case "right":
+    case "up":
+    case "down":
+      return value;
+    default:
+      return null;
+  }
 }
 
 function clamp(value: number, min: number, max: number): number {

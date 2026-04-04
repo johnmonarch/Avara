@@ -1,6 +1,6 @@
 import { lazy, Suspense, startTransition, useEffect, useMemo, useRef, useState } from "react";
 
-import type { SnapshotPacket } from "@avara/shared-protocol";
+import type { ScoutCommand, SnapshotPacket } from "@avara/shared-protocol";
 import type {
   AdCampaign,
   AdPlacementType,
@@ -85,6 +85,7 @@ interface BindingMap {
   crouchJumpKeys: string[];
   missileKeys: string[];
   grenadeKeys: string[];
+  scoutViewKeys: string[];
 }
 
 export function App() {
@@ -122,7 +123,17 @@ export function App() {
 
   const keyStateRef = useRef<Record<string, boolean>>({});
   const lookStateRef = useRef({ aimYaw: 0, aimPitch: 0 });
-  const queuedActionRef = useRef({ loadMissile: false, loadGrenade: false });
+  const queuedActionRef = useRef<{
+    loadMissile: boolean;
+    loadGrenade: boolean;
+    toggleScoutView: boolean;
+    scoutCommand: ScoutCommand | null;
+  }>({
+    loadMissile: false,
+    loadGrenade: false,
+    toggleScoutView: false,
+    scoutCommand: null
+  });
   const fireActiveRef = useRef(false);
   const reportedAdsRef = useRef(new Set<string>());
   const visibilityRef = useRef(documentHidden);
@@ -439,6 +450,15 @@ export function App() {
     ]);
 
     const onKeyDown = (event: KeyboardEvent) => {
+      if (bindings.scoutViewKeys.includes(event.code)) {
+        if (!event.repeat) {
+          queuedActionRef.current.toggleScoutView = true;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
       if (trackedKeys.has(event.code)) {
         keyStateRef.current[event.code] = true;
         event.preventDefault();
@@ -458,9 +478,16 @@ export function App() {
         queuedActionRef.current.loadGrenade = true;
         event.preventDefault();
       }
+
     };
 
     const onKeyUp = (event: KeyboardEvent) => {
+      if (bindings.scoutViewKeys.includes(event.code)) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
       if (trackedKeys.has(event.code)) {
         keyStateRef.current[event.code] = false;
         event.preventDefault();
@@ -485,15 +512,15 @@ export function App() {
       fireActiveRef.current = false;
     };
 
-    window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("keyup", onKeyUp);
+    document.addEventListener("keydown", onKeyDown, true);
+    document.addEventListener("keyup", onKeyUp, true);
     window.addEventListener("mousedown", onMouseDown);
     window.addEventListener("mouseup", onMouseUp);
     window.addEventListener("blur", onBlur);
 
     return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("keyup", onKeyUp);
+      document.removeEventListener("keydown", onKeyDown, true);
+      document.removeEventListener("keyup", onKeyUp, true);
       window.removeEventListener("mousedown", onMouseDown);
       window.removeEventListener("mouseup", onMouseUp);
       window.removeEventListener("blur", onBlur);
@@ -1321,7 +1348,12 @@ export function App() {
 function buildCombatInput(
   keys: Record<string, boolean>,
   look: { aimYaw: number; aimPitch: number },
-  queuedActions: { loadMissile: boolean; loadGrenade: boolean },
+  queuedActions: {
+    loadMissile: boolean;
+    loadGrenade: boolean;
+    toggleScoutView: boolean;
+    scoutCommand: ScoutCommand | null;
+  },
   primaryFire: boolean,
   settings: PlayerSettings
 ) {
@@ -1339,11 +1371,15 @@ function buildCombatInput(
     loadMissile: queuedActions.loadMissile,
     loadGrenade: queuedActions.loadGrenade,
     boost: isBindingActive(keys, bindings.boostKeys),
-    crouchJump: isBindingActive(keys, bindings.crouchJumpKeys)
+    crouchJump: isBindingActive(keys, bindings.crouchJumpKeys),
+    toggleScoutView: queuedActions.toggleScoutView,
+    scoutCommand: queuedActions.scoutCommand
   };
 
   queuedActions.loadMissile = false;
   queuedActions.loadGrenade = false;
+  queuedActions.toggleScoutView = false;
+  queuedActions.scoutCommand = null;
   return payload;
 }
 
@@ -1358,7 +1394,8 @@ function getBindingMap(controlPreset: PlayerSettings["controlPreset"]): BindingM
       boostKeys: ["ShiftLeft", "ShiftRight"],
       crouchJumpKeys: ["Space"],
       missileKeys: ["KeyQ"],
-      grenadeKeys: ["KeyE"]
+      grenadeKeys: ["KeyE"],
+      scoutViewKeys: ["Tab"]
     };
   }
 
@@ -1371,7 +1408,8 @@ function getBindingMap(controlPreset: PlayerSettings["controlPreset"]): BindingM
     boostKeys: ["ShiftLeft", "ShiftRight"],
     crouchJumpKeys: [],
     missileKeys: ["KeyQ", "KeyF"],
-    grenadeKeys: ["KeyE", "KeyG"]
+    grenadeKeys: ["KeyE", "KeyG"],
+    scoutViewKeys: ["Tab"]
   };
 }
 
