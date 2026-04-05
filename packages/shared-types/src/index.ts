@@ -146,6 +146,25 @@ export interface LevelScene {
   nodes: SceneNode[];
 }
 
+export interface HullSimulationSettings {
+  resourceId: number;
+  shapeId: number;
+  maxMissiles: number;
+  maxGrenades: number;
+  maxBoosters: number;
+  mass: number;
+  energyRatio: number;
+  energyChargeRatio: number;
+  shieldsRatio: number;
+  shieldsChargeRatio: number;
+  minShotRatio: number;
+  maxShotRatio: number;
+  shotChargeRatio: number;
+  rideHeight: number;
+  accelerationRatio: number;
+  jumpPowerRatio: number;
+}
+
 export interface LevelSimulationSettings {
   gravity: number;
   defaultTraction: number;
@@ -163,6 +182,7 @@ export interface LevelSimulationSettings {
   incarnateVolume: number;
   blastSoundDefaultId: number;
   blastSoundDefaultUrl?: string;
+  defaultHull: HullSimulationSettings;
 }
 
 export interface RoomSummary {

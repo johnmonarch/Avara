@@ -24,6 +24,8 @@ interface LevelViewportProps {
   playerSettings: PlayerSettings;
   prototypeStatus: "idle" | "bootstrapping" | "live";
   onAimChange?: (aim: { aimYaw: number; aimPitch: number }) => void;
+  isVerticalMotionActive?: () => boolean;
+  onStanceAdjust?: (delta: number) => void;
   onPointerLockChange?: (locked: boolean) => void;
   onTelemetryChange?: (input: {
     fps: number | null;
@@ -106,6 +108,8 @@ export default function LevelViewport({
   playerSettings,
   prototypeStatus,
   onAimChange,
+  isVerticalMotionActive,
+  onStanceAdjust,
   onPointerLockChange,
   onTelemetryChange
 }: LevelViewportProps) {
@@ -126,6 +130,8 @@ export default function LevelViewport({
   const snapshotRef = useRef<SnapshotPacket | null>(snapshot);
   const localPlayerIdRef = useRef(localPlayerId);
   const aimCallbackRef = useRef(onAimChange);
+  const verticalMotionCheckRef = useRef(isVerticalMotionActive);
+  const stanceAdjustRef = useRef(onStanceAdjust);
   const billboardRef = useRef<LevelBillboardAssignment[]>(billboards);
   const boundPlayerIdRef = useRef("");
   const settingsRef = useRef(playerSettings);
@@ -141,6 +147,14 @@ export default function LevelViewport({
   useEffect(() => {
     aimCallbackRef.current = onAimChange;
   }, [onAimChange]);
+
+  useEffect(() => {
+    verticalMotionCheckRef.current = isVerticalMotionActive;
+  }, [isVerticalMotionActive]);
+
+  useEffect(() => {
+    stanceAdjustRef.current = onStanceAdjust;
+  }, [onStanceAdjust]);
 
   useEffect(() => {
     billboardRef.current = billboards;
@@ -383,13 +397,16 @@ export default function LevelViewport({
       const yawScale = 0.0024 * settingsRef.current.sensitivity;
       const pitchScale = 0.0017 * settingsRef.current.sensitivity;
       const pitchDirection = settingsRef.current.invertY ? 1 : -1;
+      const pitchDelta = event.movementY * pitchScale * pitchDirection;
+      const verticalMotionActive = verticalMotionCheckRef.current?.() ?? false;
 
       heading.current.yaw -= event.movementX * yawScale;
-      heading.current.pitch = THREE.MathUtils.clamp(
-        heading.current.pitch + event.movementY * pitchScale * pitchDirection,
-        -0.55,
-        0.32
-      );
+      if (verticalMotionActive) {
+        stanceAdjustRef.current?.(event.movementY * 0.002 * settingsRef.current.sensitivity * pitchDirection);
+        return;
+      }
+
+      heading.current.pitch = THREE.MathUtils.clamp(heading.current.pitch + pitchDelta, -0.55, 0.32);
     };
 
     const onClick = () => {

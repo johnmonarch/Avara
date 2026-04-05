@@ -30,6 +30,7 @@ export interface InputPacket {
   turnBody: number;
   aimYaw: number;
   aimPitch: number;
+  stanceDelta?: number;
   primaryFire: boolean;
   loadMissile: boolean;
   loadGrenade: boolean;

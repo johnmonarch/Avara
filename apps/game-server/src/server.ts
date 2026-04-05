@@ -22,7 +22,7 @@ import type {
   SnapshotProjectileState,
   WeaponLoad
 } from "@avara/shared-protocol";
-import type { LevelScene, LevelSimulationSettings, SceneNode } from "@avara/shared-types";
+import type { HullSimulationSettings, LevelScene, LevelSimulationSettings, SceneNode } from "@avara/shared-types";
 import { PROTOCOL_VERSION } from "@avara/shared-protocol";
 import { log } from "@avara/telemetry";
 
@@ -74,6 +74,11 @@ const HECTOR_MAX_HEAD_HEIGHT = 1.75;
 const HECTOR_BEST_SPEED_HEIGHT = 1.7;
 const HECTOR_DEFAULT_STANCE = HECTOR_BEST_SPEED_HEIGHT;
 const HECTOR_GRAVITY = 0.12;
+const HECTOR_LEG_SPACE_ABS = 0.6;
+const HECTOR_LEG_SCAN_HEIGHT = 0.2;
+const HECTOR_CONTACT_HEIGHT = 0.1;
+const PLAYER_COLLISION_TOP_PADDING = 0.45;
+const PLAYER_COLLISION_SAMPLE_PADDING = 0.12;
 const BOOST_LENGTH_CLASSIC_FRAMES = 16 * 5;
 const MINI_BOOST_CLASSIC_FRAMES = 32;
 const MISSILE_LOAD_CLASSIC_FRAMES = 4;
@@ -106,10 +111,24 @@ const WALKER_AIM_YAW_LIMIT = (120 * Math.PI) / 180;
 const WALKER_AIM_PITCH_MIN = (-30 * Math.PI) / 180;
 const WALKER_AIM_PITCH_MAX = (30 * Math.PI) / 180;
 const DEFAULT_HECTOR_HULL = {
-  shapeId: 210,
-  shapeKey: "bspHECTORBoundBox",
-  shapeAssetUrl: `${ROOT_BSP_CONTENT_PREFIX}/210.json`,
-  rideHeight: 0.2500038147554742
+  resourceId: 128,
+  shapeId: 215,
+  shapeKey: "bspAvaraLight",
+  shapeAssetUrl: `${ROOT_BSP_CONTENT_PREFIX}/215.json`,
+  rideHeight: 0.2500038147554742,
+  maxMissiles: 3,
+  maxGrenades: 6,
+  maxBoosters: 3,
+  mass: 140,
+  energyRatio: 0.9000076295109484,
+  energyChargeRatio: 1.0500038147554742,
+  shieldsRatio: 0.9000076295109484,
+  shieldsChargeRatio: 1.0500038147554742,
+  minShotRatio: 1,
+  maxShotRatio: 0.9000076295109484,
+  shotChargeRatio: 1.0500038147554742,
+  accelerationRatio: 1,
+  jumpPowerRatio: 1
 };
 const BSP_PLASMA = {
   shapeId: 203,
@@ -260,6 +279,7 @@ interface PlayerInputState {
   turnBody: number;
   aimYaw: number;
   aimPitch: number;
+  stanceDelta: number;
   primaryFire: boolean;
   loadMissile: boolean;
   loadGrenade: boolean;
@@ -286,6 +306,15 @@ interface ScoutState {
   health: number;
   action: ScoutCommand | "inactive";
   nextRotateFlag: boolean;
+}
+
+interface WalkerLegState {
+  x: number;
+  y: number;
+  whereX: number;
+  whereY: number;
+  whereZ: number;
+  touching: boolean;
 }
 
 interface PlayerState {
@@ -330,6 +359,34 @@ interface PlayerState {
   scoutView: boolean;
   scoutId?: string;
   lastSeenTick: number;
+  mass: number;
+  baseMass: number;
+  maxAcceleration: number;
+  jumpBasePower: number;
+  maxEnergy: number;
+  maxShields: number;
+  fullGunEnergy: number;
+  activeGunEnergy: number;
+  classicGeneratorPower: number;
+  classicShieldRegen: number;
+  classicGunRecharge: number;
+  missileLimit: number;
+  grenadeLimit: number;
+  boosterLimit: number;
+  rideHeight: number;
+  hullShapeId: number;
+  hullShapeKey?: string;
+  hullShapeAssetUrl?: string;
+  didBump: boolean;
+  supportTraction: number;
+  supportFriction: number;
+  distance: number;
+  headChange: number;
+  targetHeight: number;
+  absAvgSpeed: number;
+  legPhase: number;
+  speedLimit: number;
+  legs: [WalkerLegState, WalkerLegState];
   input: PlayerInputState;
 }
 
@@ -544,6 +601,7 @@ createServer(async (request, response) => {
         turnBody: clamp(asNumber(body?.turnBody) ?? 0, -1, 1),
         aimYaw: clamp(asNumber(body?.aimYaw) ?? 0, -1.2, 1.2),
         aimPitch: clamp(asNumber(body?.aimPitch) ?? 0, -0.8, 0.5),
+        stanceDelta: clamp(asNumber(body?.stanceDelta) ?? 0, -0.25, 0.25),
         primaryFire: Boolean(body?.primaryFire),
         loadMissile: Boolean(body?.loadMissile),
         loadGrenade: Boolean(body?.loadGrenade),
@@ -657,6 +715,31 @@ async function createRoomState(roomId: string, scene: LevelScene, maxPlayers: nu
   };
 }
 
+function getRoomHullSettings(settings: LevelSimulationSettings): HullSimulationSettings {
+  return settings.defaultHull ?? DEFAULT_HECTOR_HULL;
+}
+
+function getHullShapeKey(shapeId: number): string | undefined {
+  switch (shapeId) {
+    case 215:
+      return "bspAvaraLight";
+    case 216:
+      return "bspAvaraMedium";
+    case 217:
+      return "bspAvaraHeavy";
+    default:
+      return undefined;
+  }
+}
+
+function getHullShapeAssetUrl(shapeId: number): string {
+  return `${ROOT_BSP_CONTENT_PREFIX}/${shapeId}.json`;
+}
+
+function getPlayerTotalMass(player: PlayerState): number {
+  return player.mass + (player.boostsRemaining * 4) + player.grenadeAmmo + player.missileAmmo;
+}
+
 function simulatePlayers(room: RoomState, dt: number): void {
   const fpsScale = dt / CLASSIC_FRAME_SECONDS;
 
@@ -666,7 +749,7 @@ function simulatePlayers(room: RoomState, dt: number): void {
     }
 
     const floor = sampleFloorHeight(room, player.x, player.z, player.y);
-    const grounded = player.y <= floor + 0.08 && player.vy <= 0.1;
+    const grounded = (player.tractionFlag || player.y <= floor + 0.08) && player.vy <= 0.1;
     if (grounded && !player.oldTractionFlag) {
       player.jumpFlag = false;
     }
@@ -679,24 +762,22 @@ function simulatePlayers(room: RoomState, dt: number): void {
     }
     player.boostPressed = false;
 
-    player.stance = HECTOR_DEFAULT_STANCE;
+    if (Math.abs(player.input.stanceDelta) > 0.000001) {
+      player.stance = clamp(player.stance + player.input.stanceDelta, HECTOR_MIN_HEAD_HEIGHT, HECTOR_MAX_HEAD_HEIGHT);
+    }
+
     simulateWalkerJump(room, player, fpsScale);
     simulateWalkerMotors(room, player, fpsScale);
+    simulateWalkerVertical(room, player, fpsScale);
 
     player.turretYaw = normalizeAngle(player.bodyYaw + clamp(player.input.aimYaw, -WALKER_AIM_YAW_LIMIT, WALKER_AIM_YAW_LIMIT));
     player.turretPitch = clamp(player.input.aimPitch, WALKER_AIM_PITCH_MIN, WALKER_AIM_PITCH_MAX);
-
-    const gravity = HECTOR_GRAVITY * room.settings.gravity;
-    if (!grounded || player.jumpFlag) {
-      player.vy -= fpsCoefficient2(gravity, fpsScale);
-    } else if (player.vy < 0) {
-      player.vy = 0;
-    }
 
     const targetX = player.x + fpsCoefficient2(player.vx, fpsScale);
     const targetY = player.y + fpsCoefficient2(player.vy, fpsScale);
     const targetZ = player.z + fpsCoefficient2(player.vz, fpsScale);
     const resolved = resolveMovement(room, player, targetX, targetY, targetZ);
+    player.didBump = resolved.bumped || !resolved.moved;
     player.x = resolved.x;
     player.y = resolved.y;
     player.z = resolved.z;
@@ -708,6 +789,15 @@ function simulatePlayers(room: RoomState, dt: number): void {
       player.jumpFlag = false;
       player.tractionFlag = true;
       player.oldTractionFlag = true;
+    }
+
+    updateWalkerLegContacts(room, player, fpsScale);
+    updateWalkerSupportFromFeet(room, player);
+    if (player.speedLimit < 0) {
+      player.speedLimit -= (player.stance - player.crouch) / 2;
+      if (player.vy < player.speedLimit) {
+        player.vy = player.speedLimit;
+      }
     }
 
     rechargePlayerSystems(player, room, fpsScale);
@@ -906,7 +996,7 @@ function simulateWalkerJump(room: RoomState, player: PlayerState, fpsScale: numb
 
   if (player.jumpReleased && player.tractionFlag && !player.jumpFlag) {
     player.vy *= 0.5;
-    player.vy += (player.crouch * 0.5) + HECTOR_JUMP_BASE_POWER;
+    player.vy += ((player.crouch * 0.5) + player.jumpBasePower) * (player.baseMass / Math.max(1, getPlayerTotalMass(player)));
     player.vy -= fpsOffset(HECTOR_GRAVITY * room.settings.gravity, fpsScale);
     player.jumpFlag = true;
   }
@@ -918,7 +1008,8 @@ function simulateWalkerJump(room: RoomState, player: PlayerState, fpsScale: numb
 function simulateWalkerMotors(room: RoomState, player: PlayerState, fpsScale: number): void {
   const elevation = player.stance - player.crouch;
   const classicMotorFriction = HECTOR_CLASSIC_MOTOR_FRICTION - Math.abs(elevation - HECTOR_BEST_SPEED_HEIGHT) / 4;
-  const classicMotorAcceleration = HECTOR_CLASSIC_ACCELERATION;
+  const massRatio = player.baseMass / Math.max(1, getPlayerTotalMass(player));
+  const classicMotorAcceleration = player.maxAcceleration * massRatio * massRatio;
   const motorResponse = fpsCoefficients(
     classicMotorFriction,
     classicMotorFriction * classicMotorAcceleration,
@@ -970,11 +1061,13 @@ function simulateWalkerMotors(room: RoomState, player: PlayerState, fpsScale: nu
 
   const distance = (player.leftMotor + player.rightMotor) / 2;
   const headChange = fpsCoefficient2((player.rightMotor - player.leftMotor) * HECTOR_TURNING_EFFECT, fpsScale);
+  player.distance = distance;
+  player.headChange = Math.abs(headChange) < 0.00005 ? 0 : headChange;
   const averageHeading = player.bodyYaw + headChange / 2;
   const motorDirX = Math.sin(averageHeading) * distance;
   const motorDirZ = Math.cos(averageHeading) * distance;
-  const supportTraction = player.tractionFlag ? room.settings.defaultTraction : 0;
-  const supportFriction = player.tractionFlag ? room.settings.defaultFriction : 0.005;
+  const supportTraction = player.supportTraction;
+  const supportFriction = player.supportFriction;
   const slideX = motorDirX - player.vx;
   const slideZ = motorDirZ - player.vz;
   const slideLength = Math.hypot(slideX, slideZ);
@@ -997,46 +1090,114 @@ function simulateWalkerMotors(room: RoomState, player: PlayerState, fpsScale: nu
   player.bodyYaw = normalizeAngle(player.bodyYaw + headChange);
 }
 
+function simulateWalkerVertical(room: RoomState, player: PlayerState, fpsScale: number): void {
+  const adjustedGravity = HECTOR_GRAVITY * room.settings.gravity;
+  let bounceTarget = player.absAvgSpeed * ((0.25 * Math.PI) - (positiveModulo(player.legPhase, Math.PI) / 4));
+  if (bounceTarget > 0) {
+    bounceTarget = -bounceTarget;
+  }
+  bounceTarget += player.targetHeight;
+
+  const extraHeight = bounceTarget + (adjustedGravity * 2);
+  if (!player.jumpFlag && player.y < extraHeight) {
+    const bounceBlend = fpsCoefficients(0.5, 0.5, fpsScale);
+    player.vy = (player.vy * bounceBlend.coeff1) + ((bounceTarget - player.y - adjustedGravity) * bounceBlend.coeff2);
+  } else {
+    player.vy -= fpsCoefficient2(adjustedGravity, fpsScale);
+  }
+
+  if (player.vy < 0) {
+    player.jumpFlag = false;
+  }
+}
+
 function rechargePlayerSystems(player: PlayerState, room: RoomState, fpsScale: number): void {
-  const generatorPower = fpsCoefficient2(HECTOR_CLASSIC_GENERATOR_POWER, fpsScale);
-  const chargeGunPerFrame = fpsCoefficient2(HECTOR_CLASSIC_GUN_RECHARGE, fpsScale);
+  const generatorPower = fpsCoefficient2(player.classicGeneratorPower, fpsScale);
+  const shieldRegen = fpsCoefficient2(player.classicShieldRegen, fpsScale);
+  const chargeGunPerFrame = fpsCoefficient2(player.classicGunRecharge, fpsScale);
   const boosting = player.boostEndTick > room.tick;
 
-  if (player.energy < HECTOR_MAX_ENERGY) {
+  if (player.shields < player.maxShields) {
+    const regenRate = player.maxEnergy > 0 ? (shieldRegen * player.energy) / player.maxEnergy : 0;
+    if (boosting) {
+      player.shields += shieldRegen;
+    }
+    player.shields += regenRate / 8;
+    if (player.shields > player.maxShields) {
+      player.shields = player.maxShields;
+    }
+    player.energy -= regenRate;
+  }
+
+  const charge = player.maxEnergy > 0 ? ((player.energy + generatorPower) * chargeGunPerFrame) / player.maxEnergy : 0;
+  if (player.gunEnergyLeft < player.fullGunEnergy) {
+    player.energy -= charge;
+    player.gunEnergyLeft += player.gunEnergyLeft > player.activeGunEnergy ? charge * 0.85 : charge * 1.05;
+    player.gunEnergyLeft = Math.min(player.fullGunEnergy, player.gunEnergyLeft);
+  }
+  if (player.gunEnergyRight < player.fullGunEnergy) {
+    player.energy -= charge;
+    player.gunEnergyRight += player.gunEnergyRight > player.activeGunEnergy ? charge * 0.85 : charge * 1.05;
+    player.gunEnergyRight = Math.min(player.fullGunEnergy, player.gunEnergyRight);
+  }
+
+  if (player.energy < player.maxEnergy) {
     player.energy += generatorPower;
     if (boosting) {
       player.energy += 4 * generatorPower;
     }
-    player.energy = Math.min(HECTOR_MAX_ENERGY, player.energy);
   }
 
-  if (player.gunEnergyLeft < HECTOR_FULL_GUN_ENERGY) {
-    player.gunEnergyLeft = Math.min(HECTOR_FULL_GUN_ENERGY, player.gunEnergyLeft + chargeGunPerFrame);
-  }
-  if (player.gunEnergyRight < HECTOR_FULL_GUN_ENERGY) {
-    player.gunEnergyRight = Math.min(HECTOR_FULL_GUN_ENERGY, player.gunEnergyRight + chargeGunPerFrame);
-  }
+  player.energy = clamp(player.energy, 0, player.maxEnergy);
 }
 
 function resolveMovement(room: RoomState, player: PlayerState, targetX: number, targetY: number, targetZ: number) {
   const both = resolvePosition(room, player, targetX, targetY, targetZ);
   if (both) {
-    return both;
+    return { ...both, moved: true, bumped: false };
   }
 
   const slideX = resolvePosition(room, player, targetX, targetY, player.z);
   if (slideX) {
-    return slideX;
+    return { ...slideX, moved: true, bumped: true };
   }
 
   const slideZ = resolvePosition(room, player, player.x, targetY, targetZ);
   if (slideZ) {
-    return slideZ;
+    return { ...slideZ, moved: true, bumped: true };
+  }
+
+  const lateralPush = resolveBumpPush(room, player, targetY);
+  if (lateralPush) {
+    return { ...lateralPush, moved: true, bumped: true };
   }
 
   const floor = sampleFloorHeight(room, player.x, player.z, player.y);
   const landed = targetY <= floor + 0.01;
-  return { x: player.x, y: landed ? floor : player.y, z: player.z, landed };
+  return { x: player.x, y: landed ? floor : player.y, z: player.z, landed, moved: false, bumped: true };
+}
+
+function resolveBumpPush(room: RoomState, player: PlayerState, targetY: number) {
+  const offsetDistance = fpsCoefficient2(1 / 16, tickDeltaScale());
+  const pushMagnitude = fpsCoefficient2(1 / 8, tickDeltaScale());
+  const leftX = Math.cos(player.bodyYaw) * offsetDistance;
+  const leftZ = Math.sin(player.bodyYaw) * offsetDistance;
+
+  const left = resolvePosition(room, player, player.x + leftX, targetY, player.z - leftZ);
+  if (left) {
+    player.vx -= Math.cos(player.bodyYaw) * pushMagnitude;
+    player.vz += Math.sin(player.bodyYaw) * pushMagnitude;
+    return left;
+  }
+
+  const right = resolvePosition(room, player, player.x - leftX, targetY, player.z + leftZ);
+  if (right) {
+    player.vx += Math.cos(player.bodyYaw) * pushMagnitude;
+    player.vz -= Math.sin(player.bodyYaw) * pushMagnitude;
+    return right;
+  }
+
+  return null;
 }
 
 function resolvePosition(room: RoomState, player: PlayerState, x: number, targetY: number, z: number) {
@@ -1044,14 +1205,13 @@ function resolvePosition(room: RoomState, player: PlayerState, x: number, target
   if (floor - player.y > MAX_STEP_HEIGHT && targetY <= floor + 0.01) {
     return null;
   }
-  if (isBlocked(room, x, z, floor)) {
-    return null;
-  }
-
   const landed = targetY <= floor + 0.01;
   const resolvedY = landed || floor > targetY
     ? (floor - targetY <= MAX_STEP_HEIGHT + 0.05 ? floor : targetY)
     : targetY;
+  if (isBlocked(room, player, { x: player.x, y: player.y, z: player.z }, { x, y: resolvedY, z })) {
+    return null;
+  }
 
   return {
     x: clamp(x, room.bounds.minX, room.bounds.maxX),
@@ -1061,8 +1221,110 @@ function resolvePosition(room: RoomState, player: PlayerState, x: number, target
   };
 }
 
+function updateWalkerLegContacts(room: RoomState, player: PlayerState, fpsScale: number): void {
+  player.speedLimit = player.vy;
+  player.tractionFlag = false;
+  player.targetHeight = 0;
+
+  const elevation = Math.max(HECTOR_MIN_HEAD_HEIGHT, player.stance - player.crouch);
+  const legSpeeds = computeWalkerLegSpeeds(player);
+  player.absAvgSpeed = Math.abs(legSpeeds[0]) + Math.abs(legSpeeds[1]);
+
+  const phaseChange = player.absAvgSpeed > 0.000001
+    ? (Math.sqrt(player.absAvgSpeed) * 0.91) / Math.max(elevation, 0.000001)
+    : 0;
+  player.legPhase += fpsCoefficient2(phaseChange / 10, fpsScale);
+
+  let legPhase = player.legPhase;
+  const sinHeading = Math.sin(player.bodyYaw);
+  const cosHeading = Math.cos(player.bodyYaw);
+
+  for (let index = 0; index < 2; index += 1) {
+    const leg = player.legs[index];
+    const legSpeed = legSpeeds[index];
+
+    leg.x -= legSpeed / 4;
+
+    let moveRadius = phaseChange ? (legSpeed / phaseChange) : legSpeed;
+    const targetX = -Math.cos(legPhase) * moveRadius;
+    moveRadius = Math.abs(moveRadius);
+    const targetY = player.y - (elevation / 16) + (Math.sin(legPhase) * moveRadius);
+
+    const tempX = index === 0 ? HECTOR_LEG_SPACE_ABS : -HECTOR_LEG_SPACE_ABS;
+    const tempZ = (targetX + leg.x) / 2;
+    const worldX = player.x + (tempZ * sinHeading) - (tempX * cosHeading);
+    const worldZ = player.z + (tempZ * cosHeading) + (tempX * sinHeading);
+    const footScanHeight = player.y + HECTOR_LEG_SCAN_HEIGHT + (elevation / 2);
+    const contactY = sampleFloorHeight(room, worldX, worldZ, footScanHeight);
+
+    if ((contactY - player.y) < -player.speedLimit) {
+      player.speedLimit = -(contactY - player.y) * fpsScale;
+    }
+
+    if (contactY > player.targetHeight) {
+      player.targetHeight = contactY;
+    }
+    if (contactY + HECTOR_CONTACT_HEIGHT >= player.y) {
+      player.tractionFlag = true;
+    }
+
+    leg.y += player.y;
+    leg.y = (targetY + leg.y) / 2;
+
+    if (leg.y > contactY) {
+      leg.x = (targetX + leg.x) / 2;
+      leg.touching = false;
+    } else {
+      const absSpeed = Math.abs(legSpeed);
+      leg.x = (targetX - absSpeed + leg.x) / 2;
+      leg.y = contactY;
+      leg.touching = true;
+    }
+
+    leg.whereX = worldX;
+    leg.whereY = contactY;
+    leg.whereZ = worldZ;
+    leg.y -= player.y;
+
+    legPhase += Math.PI;
+  }
+}
+
+function updateWalkerSupportFromFeet(room: RoomState, player: PlayerState): void {
+  let traction = 0;
+  let friction = 0;
+  let contacts = 0;
+
+  for (const leg of player.legs) {
+    if (!leg.touching) {
+      continue;
+    }
+    traction += room.settings.defaultTraction;
+    friction += room.settings.defaultFriction;
+    contacts += 1;
+  }
+
+  if (contacts > 0) {
+    player.supportTraction = traction / contacts;
+    player.supportFriction = friction / contacts;
+    return;
+  }
+
+  player.supportTraction = 0;
+  player.supportFriction = player.didBump ? 0.05 : 0.005;
+}
+
+function computeWalkerLegSpeeds(player: PlayerState): [number, number] {
+  const temp = (HECTOR_LEG_SPACE_ABS * 18) * player.headChange;
+  return [player.distance - temp, player.distance + temp];
+}
+
 function sampleFloorHeight(room: RoomState, x: number, z: number, currentY: number): number {
   let floor = 0;
+  const meshFloor = sampleMeshFloorHeight(room, x, z, currentY);
+  if (meshFloor !== null) {
+    floor = Math.max(floor, meshFloor);
+  }
 
   for (const blocker of room.blockers) {
     if (pointInRotatedRect(x, z, blocker.x, blocker.z, blocker.width / 2, blocker.depth / 2, blocker.yaw)) {
@@ -1082,6 +1344,30 @@ function sampleFloorHeight(room: RoomState, x: number, z: number, currentY: numb
   return floor;
 }
 
+function sampleMeshFloorHeight(room: RoomState, x: number, z: number, currentY: number): number | null {
+  if (!room.collisionMeshes.length) {
+    return null;
+  }
+
+  const origin = { x, y: currentY + MAX_STEP_HEIGHT + 0.05, z };
+  const target = { x, y: origin.y - 128, z };
+
+  if (nativeCoreAvailable && room.collisionTriangleBuffer.length) {
+    const distance = findRayDistanceNative(room.collisionTriangleBuffer, origin, target);
+    if (typeof distance === "number") {
+      const pointY = origin.y - distance;
+      return pointY <= currentY + MAX_STEP_HEIGHT + 0.05 ? pointY : null;
+    }
+  }
+
+  const impact = findCollisionMeshImpact(room, origin, target, 0);
+  if (!impact) {
+    return null;
+  }
+
+  return impact.point.y <= currentY + MAX_STEP_HEIGHT + 0.05 ? impact.point.y : null;
+}
+
 function sampleRampHeight(ramp: RampSurface, x: number, z: number): number | null {
   const local = toLocalPoint(x, z, ramp.x, ramp.z, ramp.yaw);
   if (Math.abs(local.x) > ramp.width / 2 || Math.abs(local.z) > ramp.depth / 2) {
@@ -1092,18 +1378,120 @@ function sampleRampHeight(ramp: RampSurface, x: number, z: number): number | nul
   return ramp.baseY + ramp.height * progress;
 }
 
-function isBlocked(room: RoomState, x: number, z: number, floor: number): boolean {
+function isBlocked(
+  room: RoomState,
+  player: PlayerState,
+  start: { x: number; y: number; z: number },
+  end: { x: number; y: number; z: number }
+): boolean {
+  const collisionHeight = getPlayerCollisionHeight(player);
+  const collisionTop = end.y + collisionHeight;
+
   for (const blocker of room.blockers) {
-    if (!pointInRotatedRect(x, z, blocker.x, blocker.z, blocker.width / 2 + PLAYER_RADIUS, blocker.depth / 2 + PLAYER_RADIUS, blocker.yaw)) {
+    if (!blockerOverlapsMovement(start.x, start.z, end.x, end.z, blocker, PLAYER_RADIUS)) {
       continue;
     }
 
-    if (blocker.topY > floor + 0.35) {
+    if (rangesOverlap(end.y + 0.05, collisionTop, blocker.baseY, blocker.topY)) {
       return true;
     }
   }
 
+  return playerHitsCollisionMesh(room, start, end, collisionHeight);
+}
+
+function playerHitsCollisionMesh(
+  room: RoomState,
+  start: { x: number; y: number; z: number },
+  end: { x: number; y: number; z: number },
+  collisionHeight: number
+): boolean {
+  if (!room.collisionMeshes.length) {
+    return false;
+  }
+
+  const heightSamples = [
+    end.y + PLAYER_COLLISION_SAMPLE_PADDING,
+    end.y + (collisionHeight / 2),
+    end.y + Math.max(PLAYER_COLLISION_SAMPLE_PADDING, collisionHeight - PLAYER_COLLISION_SAMPLE_PADDING)
+  ];
+  const radialOffsets = [
+    { x: 0, z: 0 },
+    { x: PLAYER_RADIUS, z: 0 },
+    { x: -PLAYER_RADIUS, z: 0 },
+    { x: 0, z: PLAYER_RADIUS },
+    { x: 0, z: -PLAYER_RADIUS },
+    { x: PLAYER_RADIUS * 0.7071, z: PLAYER_RADIUS * 0.7071 },
+    { x: -PLAYER_RADIUS * 0.7071, z: PLAYER_RADIUS * 0.7071 },
+    { x: PLAYER_RADIUS * 0.7071, z: -PLAYER_RADIUS * 0.7071 },
+    { x: -PLAYER_RADIUS * 0.7071, z: -PLAYER_RADIUS * 0.7071 }
+  ];
+
+  for (const height of heightSamples) {
+    const relativeHeight = height - end.y;
+    for (const offset of radialOffsets) {
+      const sampleStart = {
+        x: start.x + offset.x,
+        y: start.y + relativeHeight,
+        z: start.z + offset.z
+      };
+      const sampleEnd = {
+        x: end.x + offset.x,
+        y: height,
+        z: end.z + offset.z
+      };
+
+      if (nativeCoreAvailable && room.collisionTriangleBuffer.length) {
+        if (findSegmentImpactNative(room.collisionTriangleBuffer, sampleStart, sampleEnd, 0)) {
+          return true;
+        }
+        continue;
+      }
+
+      if (findCollisionMeshImpact(room, sampleStart, sampleEnd, 0)) {
+        return true;
+      }
+    }
+  }
+
   return false;
+}
+
+function getPlayerCollisionHeight(player: PlayerState): number {
+  return Math.max(
+    HECTOR_MIN_HEAD_HEIGHT + player.rideHeight,
+    (player.stance - player.crouch) + player.rideHeight + PLAYER_COLLISION_TOP_PADDING
+  );
+}
+
+function blockerOverlapsMovement(
+  startX: number,
+  startZ: number,
+  endX: number,
+  endZ: number,
+  blocker: Pick<RectSurface, "x" | "z" | "width" | "depth" | "yaw">,
+  padding: number
+): boolean {
+  if (pointInRotatedRect(startX, startZ, blocker.x, blocker.z, blocker.width / 2 + padding, blocker.depth / 2 + padding, blocker.yaw)) {
+    return true;
+  }
+  if (pointInRotatedRect(endX, endZ, blocker.x, blocker.z, blocker.width / 2 + padding, blocker.depth / 2 + padding, blocker.yaw)) {
+    return true;
+  }
+
+  const deltaX = endX - startX;
+  const deltaZ = endZ - startZ;
+  const distance = Math.hypot(deltaX, deltaZ);
+  if (distance <= 0.000001) {
+    return false;
+  }
+
+  const hit = rayIntersectRotatedRect(startX, startZ, deltaX / distance, deltaZ / distance, blocker, padding);
+  return hit !== null && hit <= distance;
+}
+
+function rangesOverlap(minA: number, maxA: number, minB: number, maxB: number): boolean {
+  return minA <= maxB && maxA >= minB;
 }
 
 function processRespawns(room: RoomState): void {
@@ -1260,8 +1648,8 @@ function processPickups(room: RoomState): void {
 
       const beforeMissiles = player.missileAmmo;
       const beforeGrenades = player.grenadeAmmo;
-      player.missileAmmo = clamp(player.missileAmmo + pickup.missiles, 0, room.settings.maxStartMissiles);
-      player.grenadeAmmo = clamp(player.grenadeAmmo + pickup.grenades, 0, room.settings.maxStartGrenades);
+      player.missileAmmo = clamp(player.missileAmmo + pickup.missiles, 0, player.missileLimit);
+      player.grenadeAmmo = clamp(player.grenadeAmmo + pickup.grenades, 0, player.grenadeLimit);
       if (player.weaponLoad === "cannon") {
         if (pickup.kind === "missiles" && player.missileAmmo > beforeMissiles) {
           player.weaponLoad = "missile";
@@ -1303,9 +1691,9 @@ function fireWeapon(room: RoomState, player: PlayerState): void {
       break;
   }
 
-  const gunIndex = player.gunEnergyLeft < player.gunEnergyRight ? "left" : "right";
+  const gunIndex = player.gunEnergyLeft < player.gunEnergyRight ? "right" : "left";
   const availableEnergy = gunIndex === "left" ? player.gunEnergyLeft : player.gunEnergyRight;
-  if (availableEnergy < HECTOR_ACTIVE_GUN_ENERGY) {
+  if (availableEnergy < player.activeGunEnergy) {
     return;
   }
 
@@ -1336,10 +1724,10 @@ function loadWeapon(room: RoomState, player: PlayerState, weapon: Exclude<Weapon
   }
 
   if (player.weaponLoad === "missile") {
-    player.missileAmmo = Math.min(room.settings.maxStartMissiles, player.missileAmmo + 1);
+    player.missileAmmo = Math.min(player.missileLimit, player.missileAmmo + 1);
   }
   if (player.weaponLoad === "grenade") {
-    player.grenadeAmmo = Math.min(room.settings.maxStartGrenades, player.grenadeAmmo + 1);
+    player.grenadeAmmo = Math.min(player.grenadeLimit, player.grenadeAmmo + 1);
   }
 
   if (weapon === "missile") {
@@ -1415,7 +1803,7 @@ function spawnProjectile(
           : GRENADE_LIFETIME_CLASSIC_FRAMES,
       fpsScale
     ),
-    directDamage: isPlasma ? shieldUnitsToHealth(energy) : 0,
+    directDamage: isPlasma ? energy : 0,
     blastPower: isMissile ? room.settings.missilePower : isGrenade ? room.settings.grenadePower : 0,
     gravity: isGrenade ? fpsCoefficient2(HECTOR_GRAVITY * room.settings.gravity, fpsScale) : 0,
     friction: isGrenade ? fpsCoefficient1(GRENADE_FRICTION, fpsScale) : 1,
@@ -1465,9 +1853,19 @@ function simulateProjectiles(room: RoomState, _dt: number): void {
       projectile.y = impact.y;
       projectile.z = impact.z;
       if (impact.player && projectile.kind === "plasma" && projectile.directDamage > 0) {
-        applyDamage(room, impact.player, projectile.directDamage, room.players.get(projectile.ownerId) ?? null);
+        applyDamage(
+          room,
+          impact.player,
+          shieldUnitsToHealth(projectile.directDamage, impact.player.maxShields),
+          room.players.get(projectile.ownerId) ?? null
+        );
       } else if (impact.scout && projectile.kind === "plasma" && projectile.directDamage > 0) {
-        applyScoutDamage(room, impact.scout, projectile.directDamage, room.players.get(projectile.ownerId) ?? null);
+        applyScoutDamage(
+          room,
+          impact.scout,
+          shieldUnitsToHealth(projectile.directDamage, SCOUT_SHIELD),
+          room.players.get(projectile.ownerId) ?? null
+        );
       } else if (projectile.kind !== "plasma") {
         explodeProjectile(room, projectile);
       }
@@ -1955,7 +2353,7 @@ function explodeProjectile(room: RoomState, projectile: ProjectileState): void {
 
     const blastEnergy = projectile.blastPower / (distance * distance);
     if (blastEnergy > 1 / 64) {
-      applyDamage(room, player, shieldUnitsToHealth(blastEnergy), owner ?? null);
+      applyDamage(room, player, shieldUnitsToHealth(blastEnergy, player.maxShields), owner ?? null);
     }
   }
 
@@ -1967,7 +2365,7 @@ function explodeProjectile(room: RoomState, projectile: ProjectileState): void {
 
     const blastEnergy = projectile.blastPower / (distance * distance);
     if (blastEnergy > 1 / 64) {
-      applyScoutDamage(room, scout, shieldUnitsToHealth(blastEnergy), owner ?? null);
+      applyScoutDamage(room, scout, shieldUnitsToHealth(blastEnergy, SCOUT_SHIELD), owner ?? null);
     }
   }
 }
@@ -2008,7 +2406,7 @@ function applyDamage(room: RoomState, target: PlayerState, amount: number, attac
   }
 
   target.health = Math.max(0, target.health - amount);
-  target.shields = healthToShieldUnits(target.health);
+  target.shields = healthToShieldUnits(target.health, target.maxShields);
   addEvent(room, {
     event: "damage",
     actorPlayerId: attacker?.id,
@@ -2136,7 +2534,10 @@ function toSnapshotPlayer(room: RoomState) {
     respawnSeconds: player.alive ? 0 : Math.max(0, Math.ceil((player.respawnAtTick - room.tick) / tickRate)),
     scoutView: player.scoutView,
     scoutId: player.scoutId,
-    ...DEFAULT_HECTOR_HULL
+    shapeId: player.hullShapeId,
+    shapeKey: player.hullShapeKey,
+    shapeAssetUrl: player.hullShapeAssetUrl,
+    rideHeight: player.rideHeight
   });
 }
 
@@ -2200,8 +2601,17 @@ function spawnFreshPlayer(
   const spawn = room.spawnPoints[room.nextSpawnIndex % room.spawnPoints.length];
   room.nextSpawnIndex += 1;
   const groundedY = sampleFloorHeight(room, spawn.x, spawn.z, spawn.y);
+  const hull = getRoomHullSettings(room.settings);
+  const missileLimit = Math.min(room.settings.maxStartMissiles, hull.maxMissiles);
+  const grenadeLimit = Math.min(room.settings.maxStartGrenades, hull.maxGrenades);
+  const boosterLimit = Math.min(room.settings.maxStartBoosts, hull.maxBoosters);
+  const maxEnergy = HECTOR_MAX_ENERGY * hull.energyRatio;
+  const maxShields = HECTOR_MAX_SHIELDS * hull.shieldsRatio;
+  const fullGunEnergy = HECTOR_FULL_GUN_ENERGY * hull.maxShotRatio;
+  const activeGunEnergy = HECTOR_ACTIVE_GUN_ENERGY * hull.minShotRatio;
+  const hullShapeId = hull.shapeId;
 
-  return {
+  const player: PlayerState = {
     id: playerId,
     displayName,
     x: spawn.x,
@@ -2216,22 +2626,22 @@ function spawnFreshPlayer(
     turretYaw: spawn.yaw,
     turretPitch: 0,
     health: 100,
-    shields: HECTOR_MAX_SHIELDS,
-    energy: HECTOR_MAX_ENERGY,
-    gunEnergyLeft: HECTOR_FULL_GUN_ENERGY,
-    gunEnergyRight: HECTOR_FULL_GUN_ENERGY,
+    shields: maxShields,
+    energy: maxEnergy,
+    gunEnergyLeft: fullGunEnergy,
+    gunEnergyRight: fullGunEnergy,
     alive: true,
     kills: carry?.kills ?? 0,
     deaths: carry?.deaths ?? 0,
-    missileAmmo: room.settings.maxStartMissiles,
-    grenadeAmmo: room.settings.maxStartGrenades,
-    boostsRemaining: room.settings.maxStartBoosts,
+    missileAmmo: missileLimit,
+    grenadeAmmo: grenadeLimit,
+    boostsRemaining: boosterLimit,
     weaponLoad: "cannon",
     respawnAtTick: 0,
     nextFireTick: room.tick + framesFromClassic(1, tickDeltaScale()),
     nextMissileLoadTick: room.tick,
     nextGrenadeLoadTick: room.tick,
-    boostEndTick: room.tick + framesFromClassic(MINI_BOOST_CLASSIC_FRAMES, tickDeltaScale()),
+    boostEndTick: room.tick,
     jumpPressed: false,
     jumpReleased: false,
     boostPressed: false,
@@ -2243,8 +2653,43 @@ function spawnFreshPlayer(
     scoutView: false,
     scoutId: undefined,
     lastSeenTick: room.tick,
+    mass: hull.mass,
+    baseMass: HECTOR_BASE_MASS,
+    maxAcceleration: HECTOR_CLASSIC_ACCELERATION * hull.accelerationRatio,
+    jumpBasePower: HECTOR_JUMP_BASE_POWER * hull.jumpPowerRatio,
+    maxEnergy,
+    maxShields,
+    fullGunEnergy,
+    activeGunEnergy,
+    classicGeneratorPower: HECTOR_CLASSIC_GENERATOR_POWER * hull.energyChargeRatio,
+    classicShieldRegen: HECTOR_CLASSIC_SHIELD_REGEN * hull.shieldsChargeRatio,
+    classicGunRecharge: HECTOR_CLASSIC_GUN_RECHARGE * hull.shotChargeRatio,
+    missileLimit,
+    grenadeLimit,
+    boosterLimit,
+    rideHeight: hull.rideHeight,
+    hullShapeId,
+    hullShapeKey: getHullShapeKey(hullShapeId),
+    hullShapeAssetUrl: getHullShapeAssetUrl(hullShapeId),
+    didBump: false,
+    supportTraction: room.settings.defaultTraction,
+    supportFriction: room.settings.defaultFriction,
+    distance: 0,
+    headChange: 0,
+    targetHeight: groundedY,
+    absAvgSpeed: 0,
+    legPhase: 0,
+    speedLimit: 0,
+    legs: [
+      { x: 0, y: 0, whereX: spawn.x, whereY: groundedY, whereZ: spawn.z, touching: true },
+      { x: 0, y: 0, whereX: spawn.x, whereY: groundedY, whereZ: spawn.z, touching: true }
+    ],
     input: emptyInput()
   };
+
+  updateWalkerLegContacts(room, player, tickDeltaScale());
+  updateWalkerSupportFromFeet(room, player);
+  return player;
 }
 
 function deriveSpawnPoints(nodes: SceneNode[]): SpawnPoint[] {
@@ -2711,6 +3156,7 @@ function emptyInput(): PlayerInputState {
     turnBody: 0,
     aimYaw: 0,
     aimPitch: 0,
+    stanceDelta: 0,
     primaryFire: false,
     loadMissile: false,
     loadGrenade: false,
@@ -2834,6 +3280,10 @@ function framesFromClassic(classicFrames: number, fpsScale: number): number {
 
 function blendLinear(current: number, target: number, blend: { coeff1: number; coeff2: number }) {
   return current * blend.coeff1 + target * blend.coeff2;
+}
+
+function positiveModulo(value: number, mod: number): number {
+  return ((value % mod) + mod) % mod;
 }
 
 function directionFromYawPitch(yaw: number, pitch: number) {
@@ -3283,12 +3733,12 @@ function moveScalarTowards(current: number, target: number, maxDelta: number): n
   return current + Math.sign(delta) * maxDelta;
 }
 
-function shieldUnitsToHealth(units: number): number {
-  return Math.max(0, Math.round((units / HECTOR_MAX_SHIELDS) * 100));
+function shieldUnitsToHealth(units: number, maxShields = HECTOR_MAX_SHIELDS): number {
+  return Math.max(0, Math.round((units / Math.max(0.0001, maxShields)) * 100));
 }
 
-function healthToShieldUnits(health: number): number {
-  return HECTOR_MAX_SHIELDS * (health / 100);
+function healthToShieldUnits(health: number, maxShields = HECTOR_MAX_SHIELDS): number {
+  return maxShields * (health / 100);
 }
 
 function asNumber(value: unknown): number | undefined {

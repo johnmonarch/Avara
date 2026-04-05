@@ -1,7 +1,14 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-import type { LevelScene, LevelSummary, SceneLocalBounds, SceneNode, SceneSound } from "@avara/shared-types";
+import type {
+  HullSimulationSettings,
+  LevelScene,
+  LevelSummary,
+  SceneLocalBounds,
+  SceneNode,
+  SceneSound
+} from "@avara/shared-types";
 
 const CURATED_PACK_PRIORITY = [
   "avaraline-strict-mode",
@@ -34,6 +41,24 @@ interface ParsedBspAsset {
     min?: [number, number, number];
     max?: [number, number, number];
   };
+}
+
+interface RawHullAsset {
+  "Hull Res ID"?: number;
+  "Max Missiles"?: number;
+  "Max Grenades"?: number;
+  "Max boosters"?: number;
+  Mass?: number;
+  "Max Energy"?: number;
+  "Energy Charge"?: number;
+  "Max Shields"?: number;
+  "Shield Charge"?: number;
+  "Min Shot"?: number;
+  "Max Shot"?: number;
+  "Shot Charge"?: number;
+  "Riding Height"?: number;
+  Acceleration?: number;
+  "Jump Power"?: number;
 }
 
 interface WallTemplate {
@@ -143,6 +168,7 @@ export async function parseLevelScene(levelsRoot: string, levelId: string): Prom
     context,
     state
   });
+  const hullSettings = await loadDefaultHullSettings(levelsRoot, resolved.packDir, context);
 
   const incarnateSoundId = readIntegerSetting(context, "incarnateSound", 411);
   const blastSoundDefaultId = readIntegerSetting(context, "blastSoundDefault", 230);
@@ -174,7 +200,8 @@ export async function parseLevelScene(levelsRoot: string, levelId: string): Prom
       incarnateSoundUrl: incarnateSoundAsset?.assetUrl,
       incarnateVolume: readNumericSetting(context, "incarnateVolume", 12),
       blastSoundDefaultId,
-      blastSoundDefaultUrl: blastSoundDefaultAsset?.assetUrl
+      blastSoundDefaultUrl: blastSoundDefaultAsset?.assetUrl,
+      defaultHull: hullSettings
     },
     nodes
   };
@@ -604,9 +631,36 @@ async function loadPackScriptContext(levelsRoot: string, packDir: string): Promi
 
 async function mergeScriptContextFromFile(scriptPath: string, context: ScriptContext): Promise<void> {
   const script = await fs.readFile(scriptPath, "utf8");
-  for (const rawLine of script.split("\n")) {
+  const lines = script.split("\n");
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const rawLine = lines[index];
     const line = rawLine.replace(/\/\/.*$/, "").trim();
-    if (!line || !line.includes("=")) {
+    if (!line) {
+      continue;
+    }
+
+    if (line.startsWith("enum ")) {
+      let nextValue = Math.round(toNumber(resolveAttributeValue(line.slice(5).trim(), context), 0));
+      for (index += 1; index < lines.length; index += 1) {
+        const enumLine = lines[index].replace(/\/\/.*$/, "").trim();
+        if (!enumLine) {
+          continue;
+        }
+        if (enumLine === "end") {
+          break;
+        }
+
+        const symbol = enumLine.split(/\s+/)[0];
+        if (symbol && !symbol.includes("=")) {
+          context[symbol] = nextValue;
+          nextValue += 1;
+        }
+      }
+      continue;
+    }
+
+    if (!line.includes("=")) {
       continue;
     }
 
@@ -619,6 +673,96 @@ async function mergeScriptContextFromFile(scriptPath: string, context: ScriptCon
 
     context[left] = resolveAttributeValue(right, context);
   }
+}
+
+async function loadDefaultHullSettings(
+  levelsRoot: string,
+  packDir: string,
+  context: ScriptContext
+): Promise<HullSimulationSettings> {
+  const hullResources = await loadHullResourceMap(levelsRoot, packDir);
+  const requestedHullId = resolveDefaultHullResourceId(context);
+  const fallbackHullId = hullResources.has(128) ? 128 : Number(hullResources.keys().next().value ?? 128);
+  const resourceId = hullResources.has(requestedHullId) ? requestedHullId : fallbackHullId;
+  const rawHull = hullResources.get(resourceId);
+
+  return {
+    resourceId,
+    shapeId: readHullNumber(rawHull?.["Hull Res ID"], 215),
+    maxMissiles: readHullNumber(rawHull?.["Max Missiles"], 3),
+    maxGrenades: readHullNumber(rawHull?.["Max Grenades"], 6),
+    maxBoosters: readHullNumber(rawHull?.["Max boosters"], 3),
+    mass: readHullNumber(rawHull?.Mass, 140),
+    energyRatio: readHullNumber(rawHull?.["Max Energy"], 1),
+    energyChargeRatio: readHullNumber(rawHull?.["Energy Charge"], 1),
+    shieldsRatio: readHullNumber(rawHull?.["Max Shields"], 1),
+    shieldsChargeRatio: readHullNumber(rawHull?.["Shield Charge"], 1),
+    minShotRatio: readHullNumber(rawHull?.["Min Shot"], 1),
+    maxShotRatio: readHullNumber(rawHull?.["Max Shot"], 1),
+    shotChargeRatio: readHullNumber(rawHull?.["Shot Charge"], 1),
+    rideHeight: readHullNumber(rawHull?.["Riding Height"], 0.2500038147554742),
+    accelerationRatio: readHullNumber(rawHull?.Acceleration, 1),
+    jumpPowerRatio: readHullNumber(rawHull?.["Jump Power"], 1)
+  };
+}
+
+async function loadHullResourceMap(levelsRoot: string, packDir: string): Promise<Map<number, RawHullAsset>> {
+  const workspaceRoot = path.dirname(levelsRoot);
+  const setPaths = [
+    path.join(workspaceRoot, "rsrc", "set.json"),
+    path.join(packDir, "set.json")
+  ];
+  const resources = new Map<number, RawHullAsset>();
+
+  for (const setPath of setPaths) {
+    if (!(await pathExists(setPath))) {
+      continue;
+    }
+
+    const setJson = await readJsonSafe<Record<string, unknown>>(setPath);
+    const hullEntries = setJson?.HULL;
+    if (!hullEntries || typeof hullEntries !== "object") {
+      continue;
+    }
+
+    for (const [resourceId, rawHull] of Object.entries(hullEntries)) {
+      if (!rawHull || typeof rawHull !== "object") {
+        continue;
+      }
+
+      const parsedResourceId = Number(resourceId);
+      if (!Number.isFinite(parsedResourceId)) {
+        continue;
+      }
+
+      resources.set(parsedResourceId, rawHull as RawHullAsset);
+    }
+  }
+
+  return resources;
+}
+
+function resolveDefaultHullResourceId(context: ScriptContext): number {
+  const candidates = [
+    context["hull.0"],
+    context["hull[0]"],
+    context["hull.1"],
+    context["hull[1]"],
+    context.lightHull,
+    context.mediumHull
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "number" && Number.isFinite(candidate)) {
+      return Math.round(candidate);
+    }
+  }
+
+  return 128;
+}
+
+function readHullNumber(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
 async function listSupplementalResourceBspDirectories(workspaceRoot: string): Promise<string[]> {

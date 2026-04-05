@@ -81,6 +81,7 @@ interface BindingMap {
   moveForwardNegative: string[];
   turnLeft: string[];
   turnRight: string[];
+  verticalMotionKeys: string[];
   primaryFireKeys: string[];
   boostKeys: string[];
   crouchJumpKeys: string[];
@@ -124,6 +125,7 @@ export function App() {
 
   const keyStateRef = useRef<Record<string, boolean>>({});
   const lookStateRef = useRef({ aimYaw: 0, aimPitch: 0 });
+  const stanceDeltaRef = useRef(0);
   const queuedActionRef = useRef<{
     loadMissile: boolean;
     loadGrenade: boolean;
@@ -453,6 +455,7 @@ export function App() {
       ...bindings.moveForwardNegative,
       ...bindings.turnLeft,
       ...bindings.turnRight,
+      ...bindings.verticalMotionKeys,
       ...bindings.primaryFireKeys,
       ...bindings.boostKeys,
       ...bindings.crouchJumpKeys
@@ -525,6 +528,7 @@ export function App() {
         toggleScoutView: false,
         scoutCommand: null
       };
+      stanceDeltaRef.current = 0;
     };
 
     document.addEventListener("keydown", onKeyDown, true);
@@ -567,6 +571,7 @@ export function App() {
             buildCombatInput(
               keyStateRef.current,
               lookStateRef.current,
+              stanceDeltaRef,
               queuedActionRef.current,
               fireActiveRef.current,
               playerSettingsRef.current
@@ -1211,6 +1216,10 @@ export function App() {
             onAimChange={(aim) => {
               lookStateRef.current = aim;
             }}
+            isVerticalMotionActive={() => isBindingActive(keyStateRef.current, getBindingMap(playerSettingsRef.current.controlPreset).verticalMotionKeys)}
+            onStanceAdjust={(delta) => {
+              stanceDeltaRef.current += delta;
+            }}
             onPointerLockChange={setPointerLocked}
             onTelemetryChange={setViewportTelemetry}
           />
@@ -1363,6 +1372,7 @@ export function App() {
 function buildCombatInput(
   keys: Record<string, boolean>,
   look: { aimYaw: number; aimPitch: number },
+  stanceDeltaRef: { current: number },
   queuedActions: {
     loadMissile: boolean;
     loadGrenade: boolean;
@@ -1382,6 +1392,7 @@ function buildCombatInput(
       (isBindingActive(keys, bindings.turnLeft) ? -1 : 0),
     aimYaw: look.aimYaw,
     aimPitch: look.aimPitch,
+    stanceDelta: stanceDeltaRef.current,
     primaryFire: primaryFire || isBindingActive(keys, bindings.primaryFireKeys),
     loadMissile: queuedActions.loadMissile,
     loadGrenade: queuedActions.loadGrenade,
@@ -1395,6 +1406,7 @@ function buildCombatInput(
   queuedActions.loadGrenade = false;
   queuedActions.toggleScoutView = false;
   queuedActions.scoutCommand = null;
+  stanceDeltaRef.current = 0;
   return payload;
 }
 
@@ -1405,6 +1417,7 @@ function getBindingMap(controlPreset: PlayerSettings["controlPreset"]): BindingM
       moveForwardNegative: ["KeyS"],
       turnLeft: ["KeyA"],
       turnRight: ["KeyD"],
+      verticalMotionKeys: ["ControlLeft"],
       primaryFireKeys: [],
       boostKeys: ["ShiftLeft", "ShiftRight"],
       crouchJumpKeys: ["Space"],
@@ -1419,6 +1432,7 @@ function getBindingMap(controlPreset: PlayerSettings["controlPreset"]): BindingM
     moveForwardNegative: ["KeyS", "ArrowDown"],
     turnLeft: ["KeyA", "ArrowLeft"],
     turnRight: ["KeyD", "ArrowRight"],
+    verticalMotionKeys: ["ControlLeft"],
     primaryFireKeys: [],
     boostKeys: ["ShiftLeft", "ShiftRight"],
     crouchJumpKeys: ["Space"],
