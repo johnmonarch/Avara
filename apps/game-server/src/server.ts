@@ -52,6 +52,7 @@ const CLASSIC_FRAME_SECONDS = 0.064;
 const ROOT_BSP_CONTENT_PREFIX = "/content/rsrc/bsps";
 const PLAYER_PLASMA_SPEED = 6;
 const PLAYER_PLASMA_LIFETIME_CLASSIC_FRAMES = 25;
+const PLAYER_PLASMA_RANGE = PLAYER_PLASMA_SPEED * PLAYER_PLASMA_LIFETIME_CLASSIC_FRAMES;
 const PLAYER_PLASMA_COLLISION_RADIUS = 0.2;
 const MISSILE_COLLISION_RADIUS = 0.55;
 const GRENADE_COLLISION_RADIUS = 0.55;
@@ -1842,6 +1843,93 @@ function findTargetInCone(
   return best?.player;
 }
 
+function findTargetAlongRay(
+  room: RoomState,
+  origin: Vec3,
+  forward: Vec3,
+  ownerId: string,
+  maxDistance: number
+): PlayerState | undefined {
+  const end = {
+    x: origin.x + forward.x * maxDistance,
+    y: origin.y + forward.y * maxDistance,
+    z: origin.z + forward.z * maxDistance
+  };
+  const obstacleDistance = nearestObstacleRayDistance(room, origin, end) ?? maxDistance;
+  let bestTarget: PlayerState | undefined;
+  let bestDistance = Math.min(maxDistance, obstacleDistance);
+
+  for (const candidate of room.players.values()) {
+    if (!candidate.alive || candidate.id === ownerId) {
+      continue;
+    }
+
+    const targetCenter = {
+      x: candidate.x,
+      y: candidate.y + PLAYER_HIT_CENTER_Y,
+      z: candidate.z
+    };
+    const t = segmentSphereIntersectionT(origin, end, targetCenter, PLAYER_HIT_RADIUS);
+    if (t === null) {
+      continue;
+    }
+
+    const distance = maxDistance * t;
+    if (distance > bestDistance) {
+      continue;
+    }
+
+    bestDistance = distance;
+    bestTarget = candidate;
+  }
+
+  return bestTarget;
+}
+
+function computePlayerTargetLock(room: RoomState, player: PlayerState): boolean {
+  if (!player.alive) {
+    return false;
+  }
+
+  const forward = directionFromYawPitch(player.turretYaw, player.turretPitch);
+  const up = upVectorFromYawPitch(player.turretYaw, player.turretPitch);
+  const right = rightVectorFromYawPitch(player.turretYaw, player.turretPitch);
+
+  if (player.weaponLoad === "missile") {
+    const missileOrigin = computeProjectileMountOrigin(
+      player,
+      SMART_MISSILE_MOUNT_OFFSET,
+      forward,
+      up,
+      right,
+      false
+    );
+    return Boolean(findTargetAlongRay(room, missileOrigin, forward, player.id, SMART_MISSILE_TARGET_RANGE));
+  }
+
+  const leftGunOrigin = computeProjectileMountOrigin(
+    player,
+    { x: -GUN_MOUNT_OFFSET_X, y: GUN_MOUNT_OFFSET_Y, z: GUN_MOUNT_OFFSET_Z },
+    forward,
+    up,
+    right,
+    false
+  );
+  if (findTargetAlongRay(room, leftGunOrigin, forward, player.id, PLAYER_PLASMA_RANGE)) {
+    return true;
+  }
+
+  const rightGunOrigin = computeProjectileMountOrigin(
+    player,
+    { x: GUN_MOUNT_OFFSET_X, y: GUN_MOUNT_OFFSET_Y, z: GUN_MOUNT_OFFSET_Z },
+    forward,
+    up,
+    right,
+    false
+  );
+  return Boolean(findTargetAlongRay(room, rightGunOrigin, forward, player.id, PLAYER_PLASMA_RANGE));
+}
+
 function rayBlocked(room: RoomState, origin: Vec3, target: Vec3): boolean {
   const distance = distanceBetween(origin, target);
   if (distance <= 0.000001) {
@@ -2044,6 +2132,7 @@ function toSnapshotPlayer(room: RoomState) {
     shields: player.shields,
     gunEnergyLeft: player.gunEnergyLeft,
     gunEnergyRight: player.gunEnergyRight,
+    targetLocked: computePlayerTargetLock(room, player),
     respawnSeconds: player.alive ? 0 : Math.max(0, Math.ceil((player.respawnAtTick - room.tick) / tickRate)),
     scoutView: player.scoutView,
     scoutId: player.scoutId,

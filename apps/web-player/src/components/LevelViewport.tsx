@@ -79,7 +79,15 @@ const HECTOR_LEG_LOW_LENGTH = 1.15;
 const HECTOR_VIEWPORT_HEIGHT = 0.35;
 const HECTOR_DEFAULT_STANCE = 1.7;
 const HECTOR_DEFAULT_RIDE_HEIGHT = 0.2500038147554742;
+const VIEW_OFFSET_Y = -0.25;
+const GUN_MOUNT_OFFSET_X = 0.25;
+const GUN_MOUNT_OFFSET_Y = 0;
+const GUN_MOUNT_OFFSET_Z = 0.75;
+const SMART_MISSILE_MOUNT_OFFSET = { x: 0, y: 0.45, z: 0.6 };
+const GRENADE_MOUNT_OFFSET = { x: 0, y: -0.2, z: 0.95 };
+const SMART_MISSILE_TARGET_RANGE = 160;
 const BSP_FORWARD_YAW_OFFSET = -Math.PI / 2;
+const FIRST_PERSON_HULL_OFFSET = { x: 0, y: -0.28, z: 0.54 };
 
 export default function LevelViewport({
   scene,
@@ -181,6 +189,54 @@ export default function LevelViewport({
     ? Math.round((normalizeAngle(localPlayer.turretYaw - localPlayer.bodyYaw) * 180) / Math.PI)
     : 0;
 
+  const reticleState = useMemo(() => {
+    if (!snapshot || !localPlayer?.alive) {
+      return "neutral";
+    }
+
+    if (typeof localPlayer.targetLocked === "boolean") {
+      return localPlayer.targetLocked ? "locked" : "neutral";
+    }
+
+    const origin = {
+      x: localPlayer.x,
+      y: localPlayer.y + getPlayerViewTargetHeight(localPlayer) + VIEW_OFFSET_Y,
+      z: localPlayer.z
+    };
+    const forward = directionFromYawPitch(localPlayer.turretYaw, localPlayer.turretPitch);
+    let bestAlignment = -1;
+    let bestDistance = Number.POSITIVE_INFINITY;
+
+    for (const candidate of snapshot.players) {
+      if (!candidate.alive || candidate.id === localPlayer.id) {
+        continue;
+      }
+
+      const dx = candidate.x - origin.x;
+      const dy = candidate.y + 2.1 - origin.y;
+      const dz = candidate.z - origin.z;
+      const distance = Math.hypot(dx, dy, dz);
+      if (distance <= 0.0001 || distance > SMART_MISSILE_TARGET_RANGE) {
+        continue;
+      }
+
+      const dirX = dx / distance;
+      const dirY = dy / distance;
+      const dirZ = dz / distance;
+      const alignment = dirX * forward.x + dirY * forward.y + dirZ * forward.z;
+      if (alignment > bestAlignment || (alignment === bestAlignment && distance < bestDistance)) {
+        bestAlignment = alignment;
+        bestDistance = distance;
+      }
+    }
+
+    if (localPlayer.weaponLoad === "missile") {
+      return bestAlignment >= 0.72 ? "locked" : "neutral";
+    }
+
+    return bestAlignment >= 0.97 ? "locked" : "neutral";
+  }, [localPlayer, snapshot]);
+
   const presetPrompts = CONTROL_PRESET_BINDINGS[playerSettings.controlPreset];
 
   useEffect(() => {
@@ -242,7 +298,8 @@ export default function LevelViewport({
     threeScene.background = new THREE.Color(scene.environment.skyColors[0] ?? "#9bd7ff");
     threeScene.fog = new THREE.Fog(scene.environment.skyColors[1] ?? "#dbe8ff", 140, profile.fogFar);
 
-    const camera = new THREE.PerspectiveCamera(64, mount.clientWidth / mount.clientHeight, 0.1, 1000);
+    const camera = new THREE.PerspectiveCamera(64, mount.clientWidth / mount.clientHeight, 0.03, 1000);
+    threeScene.add(camera);
 
     const ambient = new THREE.HemisphereLight(
       new THREE.Color(scene.environment.skyColors[0] ?? "#9bd7ff"),
@@ -276,6 +333,8 @@ export default function LevelViewport({
     const scoutLayer = new THREE.Group();
     const playerLayer = new THREE.Group();
     threeScene.add(billboardLayer, pickupLayer, projectileLayer, scoutLayer, playerLayer);
+    const cockpitRig = createFirstPersonCockpitRig();
+    camera.add(cockpitRig);
 
     const billboardNodes = scene.nodes.filter((node) => node.type === "ad_placeholder" && node.slotId);
     const billboardMeshes = new Map<string, THREE.Group>();
@@ -385,6 +444,12 @@ export default function LevelViewport({
           : spawnAnchor;
       const scoutViewActive = Boolean(liveLocalPlayer?.alive && liveLocalPlayer?.scoutView && liveLocalScout?.active);
 
+      if (localPlayerObject) {
+        localPlayerObject.visible = Boolean(liveLocalPlayer?.alive && scoutViewActive);
+      }
+
+      updateFirstPersonCockpitRig(cockpitRig, liveLocalPlayer, scoutViewActive);
+
       if (scoutViewActive && liveLocalPlayer && liveLocalScout) {
         const scoutOrigin = localScoutObject
           ? localScoutObject.position
@@ -398,6 +463,19 @@ export default function LevelViewport({
           focus.x,
           focus.y + getPlayerViewTargetHeight(liveLocalPlayer),
           focus.z
+        );
+      } else if (liveLocalPlayer?.alive) {
+        const cameraOrigin = new THREE.Vector3(
+          focus.x,
+          focus.y + getPlayerViewTargetHeight(liveLocalPlayer) + VIEW_OFFSET_Y,
+          focus.z
+        );
+        const viewDirection = directionFromYawPitch(heading.current.yaw, heading.current.pitch);
+        camera.position.copy(cameraOrigin);
+        camera.lookAt(
+          cameraOrigin.x + viewDirection.x * 12,
+          cameraOrigin.y + viewDirection.y * 12,
+          cameraOrigin.z + viewDirection.z * 12
         );
       } else {
         const chaseDistance = liveLocalPlayer?.alive ? 7.25 : 20;
@@ -514,7 +592,12 @@ export default function LevelViewport({
         </div>
       ) : null}
 
-      {pointerLocked ? <div className="reticle" aria-hidden="true" /> : null}
+      {pointerLocked ? (
+        <div className={`reticle reticle-${reticleState}`} aria-hidden="true">
+          <span className="reticle-bracket reticle-bracket-left"><span /></span>
+          <span className="reticle-bracket reticle-bracket-right"><span /></span>
+        </div>
+      ) : null}
 
       <div className="viewport-hud viewport-hud-top">
         <div className="hud-pill">Imported scene: {scene.title}</div>
@@ -1095,17 +1178,37 @@ function createWalkerAssemblyMarker(player: SnapshotPlayerState, isLocal: boolea
     preRotateY: Math.PI
   });
 
-  const leftLower = new THREE.Group();
-  leftLower.name = "walker-left-lower";
-  leftUpper.add(leftLower);
-  attachBspRenderable(leftLower, LIVE_ASSET_URLS.hectorLegLow, palette);
+    const leftLower = new THREE.Group();
+    leftLower.name = "walker-left-lower";
+    leftUpper.add(leftLower);
+    attachBspRenderable(leftLower, LIVE_ASSET_URLS.hectorLegLow, palette);
 
   const rightLower = new THREE.Group();
   rightLower.name = "walker-right-lower";
-  rightUpper.add(rightLower);
-  attachBspRenderable(rightLower, LIVE_ASSET_URLS.hectorLegLow, palette, {
-    preRotateY: Math.PI
-  });
+    rightUpper.add(rightLower);
+    attachBspRenderable(rightLower, LIVE_ASSET_URLS.hectorLegLow, palette, {
+      preRotateY: Math.PI
+    });
+
+  const loadedMissile = new THREE.Group();
+  loadedMissile.name = "walker-loaded-missile";
+  loadedMissile.position.set(
+    SMART_MISSILE_MOUNT_OFFSET.x,
+    SMART_MISSILE_MOUNT_OFFSET.y,
+    SMART_MISSILE_MOUNT_OFFSET.z
+  );
+  hullPivot.add(loadedMissile);
+  attachBspRenderable(loadedMissile, LIVE_ASSET_URLS.missile, createProjectilePalette("missile"));
+
+  const loadedGrenade = new THREE.Group();
+  loadedGrenade.name = "walker-loaded-grenade";
+  loadedGrenade.position.set(
+    GRENADE_MOUNT_OFFSET.x,
+    GRENADE_MOUNT_OFFSET.y,
+    GRENADE_MOUNT_OFFSET.z
+  );
+  hullPivot.add(loadedGrenade);
+  attachBspRenderable(loadedGrenade, LIVE_ASSET_URLS.grenade, createProjectilePalette("grenade"));
 
   updateWalkerAssemblyPose(root, player);
   return root;
@@ -1136,6 +1239,16 @@ function updateWalkerAssemblyPose(root: THREE.Group, player: SnapshotPlayerState
     hull.position.set(0, hipHeight + rideHeight, 0);
     hull.rotation.order = "YXZ";
     hull.rotation.set(-player.turretPitch, yawDelta, -yawDelta / 6);
+  }
+
+  const loadedMissile = root.getObjectByName("walker-loaded-missile");
+  if (loadedMissile) {
+    loadedMissile.visible = player.weaponLoad === "missile";
+  }
+
+  const loadedGrenade = root.getObjectByName("walker-loaded-grenade");
+  if (loadedGrenade) {
+    loadedGrenade.visible = player.weaponLoad === "grenade";
   }
 
   const turnBias = Math.max(-0.35, Math.min(0.35, (rightMotor - leftMotor) / 0.18));
@@ -1180,6 +1293,75 @@ function updateWalkerAssemblyPose(root: THREE.Group, player: SnapshotPlayerState
     const bounds = new THREE.Box3().setFromObject(rig);
     const localMin = root.worldToLocal(bounds.min.clone()).y;
     rig.position.y = Number.isFinite(localMin) ? -localMin : 0;
+  }
+}
+
+function createFirstPersonCockpitRig(): THREE.Group {
+  const root = new THREE.Group();
+  root.name = "first-person-cockpit";
+  root.visible = false;
+
+  const hull = new THREE.Group();
+  hull.name = "first-person-hull";
+  hull.position.set(FIRST_PERSON_HULL_OFFSET.x, FIRST_PERSON_HULL_OFFSET.y, FIRST_PERSON_HULL_OFFSET.z);
+  root.add(hull);
+
+  const hullPalette: MarkerPalette = {
+    marker0: "#7a5c25",
+    marker1: "#5b4521",
+    marker2: "#a7d8ff",
+    marker3: "#161616",
+    fallback: "#7a5c25"
+  };
+  attachBspRenderable(hull, LIVE_ASSET_URLS.hector, hullPalette);
+
+  const loadedMissile = new THREE.Group();
+  loadedMissile.name = "first-person-loaded-missile";
+  loadedMissile.position.set(
+    SMART_MISSILE_MOUNT_OFFSET.x,
+    SMART_MISSILE_MOUNT_OFFSET.y,
+    SMART_MISSILE_MOUNT_OFFSET.z
+  );
+  hull.add(loadedMissile);
+  attachBspRenderable(loadedMissile, LIVE_ASSET_URLS.missile, createProjectilePalette("missile"));
+
+  const loadedGrenade = new THREE.Group();
+  loadedGrenade.name = "first-person-loaded-grenade";
+  loadedGrenade.position.set(
+    GRENADE_MOUNT_OFFSET.x,
+    GRENADE_MOUNT_OFFSET.y,
+    GRENADE_MOUNT_OFFSET.z
+  );
+  hull.add(loadedGrenade);
+  attachBspRenderable(loadedGrenade, LIVE_ASSET_URLS.grenade, createProjectilePalette("grenade"));
+
+  return root;
+}
+
+function updateFirstPersonCockpitRig(
+  root: THREE.Group,
+  player: SnapshotPlayerState | null,
+  scoutViewActive: boolean
+): void {
+  const active = Boolean(player?.alive && !scoutViewActive);
+  root.visible = active;
+  if (!active || !player) {
+    return;
+  }
+
+  const hull = root.getObjectByName("first-person-hull");
+  if (hull) {
+    hull.position.set(FIRST_PERSON_HULL_OFFSET.x, FIRST_PERSON_HULL_OFFSET.y, FIRST_PERSON_HULL_OFFSET.z);
+  }
+
+  const loadedMissile = root.getObjectByName("first-person-loaded-missile");
+  if (loadedMissile) {
+    loadedMissile.visible = player.weaponLoad === "missile";
+  }
+
+  const loadedGrenade = root.getObjectByName("first-person-loaded-grenade");
+  if (loadedGrenade) {
+    loadedGrenade.visible = player.weaponLoad === "grenade";
   }
 }
 

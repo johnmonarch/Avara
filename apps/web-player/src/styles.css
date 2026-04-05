@@ -275,33 +275,81 @@ a {
 .reticle {
   position: absolute;
   inset: 50% auto auto 50%;
-  width: 24px;
-  height: 24px;
-  margin-left: -12px;
-  margin-top: -12px;
+  width: 120px;
+  height: 48px;
+  margin-left: -60px;
+  margin-top: -24px;
   pointer-events: none;
 }
 
-.reticle::before,
-.reticle::after {
+.reticle-neutral {
+  color: #68d87f;
+}
+
+.reticle-locked {
+  color: #ff4738;
+}
+
+.reticle-bracket {
+  position: absolute;
+  top: 8px;
+  width: 24px;
+  height: 32px;
+  pointer-events: none;
+}
+
+.reticle-bracket::before,
+.reticle-bracket::after,
+.reticle-bracket span {
   content: "";
   position: absolute;
-  background: rgba(255, 255, 255, 0.86);
-  border-radius: 999px;
+  display: block;
+  background: currentColor;
+  box-shadow: 0 0 8px color-mix(in srgb, currentColor 34%, transparent);
 }
 
-.reticle::before {
-  top: 11px;
-  left: 0;
-  width: 24px;
-  height: 2px;
-}
-
-.reticle::after {
+.reticle-bracket::before {
   top: 0;
-  left: 11px;
-  width: 2px;
-  height: 24px;
+  width: 18px;
+  height: 3px;
+}
+
+.reticle-bracket::after {
+  bottom: 0;
+  width: 18px;
+  height: 3px;
+}
+
+.reticle-bracket-left {
+  left: 4px;
+}
+
+.reticle-bracket-left span {
+  top: 0;
+  left: 0;
+  width: 3px;
+  height: 32px;
+}
+
+.reticle-bracket-left::before,
+.reticle-bracket-left::after {
+  left: 0;
+}
+
+.reticle-bracket-right {
+  right: 4px;
+}
+
+.reticle-bracket-right span {
+  top: 0;
+  right: 0;
+  width: 3px;
+  height: 32px;
+}
+
+.reticle-bracket-right::before,
+.reticle-bracket-right::after {
+  right: 0;
 }
 
 .combat-hud {

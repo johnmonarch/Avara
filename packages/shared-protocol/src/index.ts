@@ -75,6 +75,7 @@ export interface SnapshotPlayerState {
   rideHeight?: number;
   color?: string;
   accentColor?: string;
+  targetLocked?: boolean;
   scoutView?: boolean;
   scoutId?: string;
 }
