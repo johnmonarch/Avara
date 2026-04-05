@@ -531,15 +531,15 @@ export function App() {
       stanceDeltaRef.current = 0;
     };
 
-    document.addEventListener("keydown", onKeyDown, true);
-    document.addEventListener("keyup", onKeyUp, true);
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keyup", onKeyUp, true);
     window.addEventListener("mousedown", onMouseDown);
     window.addEventListener("mouseup", onMouseUp);
     window.addEventListener("blur", onBlur);
 
     return () => {
-      document.removeEventListener("keydown", onKeyDown, true);
-      document.removeEventListener("keyup", onKeyUp, true);
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("keyup", onKeyUp, true);
       window.removeEventListener("mousedown", onMouseDown);
       window.removeEventListener("mouseup", onMouseUp);
       window.removeEventListener("blur", onBlur);
@@ -674,7 +674,12 @@ export function App() {
       setSnapshot(null);
       setLocalPlayerId("");
       setPrototypeStatus("idle");
-      queuedActionRef.current = { loadMissile: false, loadGrenade: false };
+      queuedActionRef.current = {
+        loadMissile: false,
+        loadGrenade: false,
+        toggleScoutView: false,
+        scoutCommand: null
+      };
       fireActiveRef.current = false;
 
       if (suspendDisconnect) {

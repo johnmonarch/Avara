@@ -66,7 +66,7 @@ const billboardTextureCache = new Map<string, Promise<THREE.Texture>>();
 const ROOT_BSP_CONTENT_PREFIX = "/content/rsrc/bsps";
 const LIVE_ASSET_URLS = {
   scout: `${ROOT_BSP_CONTENT_PREFIX}/220.json`,
-  hector: `${ROOT_BSP_CONTENT_PREFIX}/210.json`,
+  hector: `${ROOT_BSP_CONTENT_PREFIX}/215.json`,
   hectorHead: `${ROOT_BSP_CONTENT_PREFIX}/210.json`,
   hectorLegHigh: `${ROOT_BSP_CONTENT_PREFIX}/211.json`,
   hectorLegLow: `${ROOT_BSP_CONTENT_PREFIX}/212.json`,
@@ -91,7 +91,7 @@ const SMART_MISSILE_MOUNT_OFFSET = { x: 0, y: 0.45, z: 0.6 };
 const GRENADE_MOUNT_OFFSET = { x: 0, y: -0.2, z: 0.95 };
 const SMART_MISSILE_TARGET_RANGE = 160;
 const BSP_FORWARD_YAW_OFFSET = -Math.PI / 2;
-const FIRST_PERSON_HULL_OFFSET = { x: 0, y: -0.42, z: -0.88 };
+const FIRST_PERSON_HULL_OFFSET = { x: 0, y: -0.64, z: -1.18 };
 const FIRST_PERSON_SMART_MISSILE_MOUNT_OFFSET = { x: 0, y: 0.45, z: -0.6 };
 const FIRST_PERSON_GRENADE_MOUNT_OFFSET = { x: 0, y: -0.2, z: -0.95 };
 const PLAYER_PLASMA_RANGE = 150;
@@ -310,6 +310,7 @@ export default function LevelViewport({
     renderer.setPixelRatio(pixelRatio);
     renderer.setSize(mount.clientWidth, mount.clientHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.domElement.tabIndex = -1;
     mount.appendChild(renderer.domElement);
     pointerLockTargetRef.current = renderer.domElement;
     setRenderStats((current) => ({
@@ -414,6 +415,7 @@ export default function LevelViewport({
     };
 
     const onClick = () => {
+      renderer.domElement.focus({ preventScroll: true });
       renderer.domElement.requestPointerLock();
     };
 
@@ -597,6 +599,7 @@ export default function LevelViewport({
     if (arenaState !== "ready") {
       return;
     }
+    pointerLockTargetRef.current?.focus({ preventScroll: true });
     pointerLockTargetRef.current?.requestPointerLock();
   }
 
@@ -1483,7 +1486,7 @@ function createFirstPersonCockpitRig(): THREE.Group {
     marker3: "#161616",
     fallback: "#7a5c25"
   };
-  syncBspRenderable(hull, LIVE_ASSET_URLS.hector, hullPalette);
+  syncBspRenderable(hull, LIVE_ASSET_URLS.hectorHead, hullPalette);
 
   const loadedMissile = new THREE.Group();
   loadedMissile.name = "first-person-loaded-missile";
@@ -1528,7 +1531,7 @@ function updateFirstPersonCockpitRig(
   };
   const hullVisual = root.getObjectByName("first-person-hull");
   if (hullVisual instanceof THREE.Group) {
-    syncBspRenderable(hullVisual, player.shapeAssetUrl ?? LIVE_ASSET_URLS.hector, hullPalette);
+    syncBspRenderable(hullVisual, LIVE_ASSET_URLS.hectorHead, hullPalette);
   }
 
   const hullAnchor = root.getObjectByName("first-person-hull-anchor");
@@ -1539,7 +1542,7 @@ function updateFirstPersonCockpitRig(
   const hull = root.getObjectByName("first-person-hull");
   if (hull) {
     hull.rotation.order = "ZXY";
-    hull.rotation.set(player.turretPitch * 0.15, 0, 0);
+    hull.rotation.set(player.turretPitch * 0.24, 0, 0);
   }
 
   const loadedMissile = root.getObjectByName("first-person-loaded-missile");
