@@ -106,9 +106,9 @@ const WALKER_AIM_YAW_LIMIT = (120 * Math.PI) / 180;
 const WALKER_AIM_PITCH_MIN = (-30 * Math.PI) / 180;
 const WALKER_AIM_PITCH_MAX = (30 * Math.PI) / 180;
 const DEFAULT_HECTOR_HULL = {
-  shapeId: 215,
-  shapeKey: "bspHullLight",
-  shapeAssetUrl: `${ROOT_BSP_CONTENT_PREFIX}/215.json`,
+  shapeId: 210,
+  shapeKey: "bspHECTORBoundBox",
+  shapeAssetUrl: `${ROOT_BSP_CONTENT_PREFIX}/210.json`,
   rideHeight: 0.2500038147554742
 };
 const BSP_PLASMA = {

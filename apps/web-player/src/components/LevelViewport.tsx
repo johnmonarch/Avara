@@ -63,7 +63,7 @@ const billboardTextureCache = new Map<string, Promise<THREE.Texture>>();
 const ROOT_BSP_CONTENT_PREFIX = "/content/rsrc/bsps";
 const LIVE_ASSET_URLS = {
   scout: `${ROOT_BSP_CONTENT_PREFIX}/220.json`,
-  hector: `${ROOT_BSP_CONTENT_PREFIX}/215.json`,
+  hector: `${ROOT_BSP_CONTENT_PREFIX}/210.json`,
   hectorHead: `${ROOT_BSP_CONTENT_PREFIX}/210.json`,
   hectorLegHigh: `${ROOT_BSP_CONTENT_PREFIX}/211.json`,
   hectorLegLow: `${ROOT_BSP_CONTENT_PREFIX}/212.json`,
@@ -87,7 +87,9 @@ const SMART_MISSILE_MOUNT_OFFSET = { x: 0, y: 0.45, z: 0.6 };
 const GRENADE_MOUNT_OFFSET = { x: 0, y: -0.2, z: 0.95 };
 const SMART_MISSILE_TARGET_RANGE = 160;
 const BSP_FORWARD_YAW_OFFSET = -Math.PI / 2;
-const FIRST_PERSON_HULL_OFFSET = { x: 0, y: -0.28, z: 0.54 };
+const FIRST_PERSON_HULL_OFFSET = { x: 0, y: -0.28, z: -0.54 };
+const FIRST_PERSON_SMART_MISSILE_MOUNT_OFFSET = { x: 0, y: 0.45, z: -0.6 };
+const FIRST_PERSON_GRENADE_MOUNT_OFFSET = { x: 0, y: -0.2, z: -0.95 };
 const PLAYER_PLASMA_RANGE = 150;
 const PLAYER_PLASMA_FALLBACK_RANGE = PLAYER_PLASMA_RANGE / 4;
 const RETICLE_DISTANCE_OFFSET = 0.1;
@@ -257,7 +259,7 @@ export default function LevelViewport({
 
     heading.current = {
       yaw: localPlayer.turretYaw,
-      pitch: -0.14
+      pitch: localPlayer.turretPitch
     };
     boundPlayerIdRef.current = localPlayer.id;
   }, [localPlayer]);
@@ -429,10 +431,13 @@ export default function LevelViewport({
 
       const liveLocalPlayer = currentSnapshot?.players.find((player) => player.id === localPlayerIdRef.current) ?? null;
       const liveLocalScout = currentSnapshot?.scouts.find((scout) => scout.ownerPlayerId === localPlayerIdRef.current) ?? null;
+      const pointerLockedToArena = document.pointerLockElement === renderer.domElement;
       if (liveLocalPlayer) {
-        const yawError = normalizeAngle(liveLocalPlayer.turretYaw - heading.current.yaw);
-        const yawCatchup = document.pointerLockElement === renderer.domElement ? 0.22 : 0.46;
-        heading.current.yaw = normalizeAngle(heading.current.yaw + yawError * yawCatchup);
+        if (!pointerLockedToArena) {
+          const yawError = normalizeAngle(liveLocalPlayer.turretYaw - heading.current.yaw);
+          heading.current.yaw = normalizeAngle(heading.current.yaw + yawError * 0.46);
+          heading.current.pitch += (liveLocalPlayer.turretPitch - heading.current.pitch) * 0.36;
+        }
       }
       if (liveLocalPlayer && aimCallbackRef.current) {
         aimCallbackRef.current({
@@ -516,6 +521,8 @@ export default function LevelViewport({
         camera,
         sceneRoot,
         playerLayer,
+        heading.current.yaw,
+        heading.current.pitch,
         liveLocalPlayer,
         localPlayerIdRef.current
       );
@@ -1133,6 +1140,8 @@ function updateCannonReticleOverlay(
   camera: THREE.PerspectiveCamera,
   sceneRoot: THREE.Group,
   playerLayer: THREE.Group,
+  viewYaw: number,
+  viewPitch: number,
   player: SnapshotPlayerState | null,
   localPlayerId?: string
 ): void {
@@ -1149,10 +1158,12 @@ function updateCannonReticleOverlay(
 
   const width = mount.clientWidth;
   const height = mount.clientHeight;
-  const forward = new THREE.Vector3();
-  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion).normalize();
-  const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
-  camera.getWorldDirection(forward).normalize();
+  const forwardDirection = directionFromYawPitch(viewYaw, viewPitch);
+  const upDirection = upVectorFromYawPitch(viewYaw, viewPitch);
+  const rightDirection = rightVectorFromYawPitch(viewYaw, viewPitch);
+  const forward = new THREE.Vector3(forwardDirection.x, forwardDirection.y, forwardDirection.z);
+  const right = new THREE.Vector3(rightDirection.x, rightDirection.y, rightDirection.z);
+  const up = new THREE.Vector3(upDirection.x, upDirection.y, upDirection.z);
 
   const raycaster = new THREE.Raycaster();
   raycaster.far = PLAYER_PLASMA_RANGE;
@@ -1432,9 +1443,9 @@ function createFirstPersonCockpitRig(): THREE.Group {
   const loadedMissile = new THREE.Group();
   loadedMissile.name = "first-person-loaded-missile";
   loadedMissile.position.set(
-    SMART_MISSILE_MOUNT_OFFSET.x,
-    SMART_MISSILE_MOUNT_OFFSET.y,
-    SMART_MISSILE_MOUNT_OFFSET.z
+    FIRST_PERSON_SMART_MISSILE_MOUNT_OFFSET.x,
+    FIRST_PERSON_SMART_MISSILE_MOUNT_OFFSET.y,
+    FIRST_PERSON_SMART_MISSILE_MOUNT_OFFSET.z
   );
   hull.add(loadedMissile);
   attachBspRenderable(loadedMissile, LIVE_ASSET_URLS.missile, createProjectilePalette("missile"));
@@ -1442,9 +1453,9 @@ function createFirstPersonCockpitRig(): THREE.Group {
   const loadedGrenade = new THREE.Group();
   loadedGrenade.name = "first-person-loaded-grenade";
   loadedGrenade.position.set(
-    GRENADE_MOUNT_OFFSET.x,
-    GRENADE_MOUNT_OFFSET.y,
-    GRENADE_MOUNT_OFFSET.z
+    FIRST_PERSON_GRENADE_MOUNT_OFFSET.x,
+    FIRST_PERSON_GRENADE_MOUNT_OFFSET.y,
+    FIRST_PERSON_GRENADE_MOUNT_OFFSET.z
   );
   hull.add(loadedGrenade);
   attachBspRenderable(loadedGrenade, LIVE_ASSET_URLS.grenade, createProjectilePalette("grenade"));
@@ -1886,6 +1897,39 @@ function normalizeAngle(value: number): number {
     angle -= Math.PI * 2;
   }
   return angle;
+}
+
+function directionFromYawPitch(yaw: number, pitch: number): { x: number; y: number; z: number } {
+  const cosPitch = Math.cos(pitch);
+  return {
+    x: Math.cos(yaw) * cosPitch,
+    y: Math.sin(pitch),
+    z: Math.sin(yaw) * cosPitch
+  };
+}
+
+function upVectorFromYawPitch(yaw: number, pitch: number): { x: number; y: number; z: number } {
+  return {
+    x: -Math.cos(yaw) * Math.sin(pitch),
+    y: Math.cos(pitch),
+    z: -Math.sin(yaw) * Math.sin(pitch)
+  };
+}
+
+function rightVectorFromYawPitch(yaw: number, pitch: number): { x: number; y: number; z: number } {
+  const forward = directionFromYawPitch(yaw, pitch);
+  const up = upVectorFromYawPitch(yaw, pitch);
+  const right = {
+    x: forward.y * up.z - forward.z * up.y,
+    y: forward.z * up.x - forward.x * up.z,
+    z: forward.x * up.y - forward.y * up.x
+  };
+  const length = Math.hypot(right.x, right.y, right.z) || 1;
+  return {
+    x: right.x / length,
+    y: right.y / length,
+    z: right.z / length
+  };
 }
 
 function createBillboardPlaceholder(node: SceneNode, material: THREE.MeshStandardMaterial): THREE.Object3D {
