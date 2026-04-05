@@ -1351,21 +1351,41 @@ function sampleMeshFloorHeight(room: RoomState, x: number, z: number, currentY: 
 
   const origin = { x, y: currentY + MAX_STEP_HEIGHT + 0.05, z };
   const target = { x, y: origin.y - 128, z };
+  let bestFloor: number | null = null;
+  const segmentBounds = pointPairBounds(origin, target);
 
-  if (nativeCoreAvailable && room.collisionTriangleBuffer.length) {
-    const distance = findRayDistanceNative(room.collisionTriangleBuffer, origin, target);
-    if (typeof distance === "number") {
-      const pointY = origin.y - distance;
-      return pointY <= currentY + MAX_STEP_HEIGHT + 0.05 ? pointY : null;
+  for (const mesh of room.collisionMeshes) {
+    if (!aabbOverlaps(segmentBounds, mesh.bounds)) {
+      continue;
+    }
+
+    for (const triangle of mesh.triangles) {
+      if (!aabbOverlaps(segmentBounds, triangle.bounds)) {
+        continue;
+      }
+
+      const normal = triangleNormal(triangle);
+      if (normal.y < 0.2) {
+        continue;
+      }
+
+      const t = segmentTriangleIntersectionT(origin, target, triangle.a, triangle.b, triangle.c);
+      if (t === null) {
+        continue;
+      }
+
+      const point = lerpPoint3(origin, target, t);
+      if (point.y > currentY + MAX_STEP_HEIGHT + 0.05) {
+        continue;
+      }
+
+      if (bestFloor === null || point.y > bestFloor) {
+        bestFloor = point.y;
+      }
     }
   }
 
-  const impact = findCollisionMeshImpact(room, origin, target, 0);
-  if (!impact) {
-    return null;
-  }
-
-  return impact.point.y <= currentY + MAX_STEP_HEIGHT + 0.05 ? impact.point.y : null;
+  return bestFloor;
 }
 
 function sampleRampHeight(ramp: RampSurface, x: number, z: number): number | null {
@@ -3715,6 +3735,21 @@ function dotVec3(left: Vec3, right: Vec3): number {
 
 function distanceBetween(left: Vec3, right: Vec3): number {
   return Math.hypot(left.x - right.x, left.y - right.y, left.z - right.z);
+}
+
+function triangleNormal(triangle: CollisionTriangle): Vec3 {
+  const edge1 = subtractVec3(triangle.b, triangle.a);
+  const edge2 = subtractVec3(triangle.c, triangle.a);
+  const normal = crossVec3(edge1, edge2);
+  const length = Math.hypot(normal.x, normal.y, normal.z);
+  if (length <= 0.000001) {
+    return { x: 0, y: 0, z: 0 };
+  }
+  return {
+    x: normal.x / length,
+    y: normal.y / length,
+    z: normal.z / length
+  };
 }
 
 function moveAngleTowards(current: number, target: number, maxDelta: number): number {

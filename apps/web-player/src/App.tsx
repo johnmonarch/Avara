@@ -1383,13 +1383,20 @@ function buildCombatInput(
   settings: PlayerSettings
 ) {
   const bindings = getBindingMap(settings.controlPreset);
+  const moveForward =
+    (isBindingActive(keys, bindings.moveForwardPositive) ? 1 : 0) +
+    (isBindingActive(keys, bindings.moveForwardNegative) ? -1 : 0);
+  const keyTurn =
+    (isBindingActive(keys, bindings.turnRight) ? 1 : 0) +
+    (isBindingActive(keys, bindings.turnLeft) ? -1 : 0);
+  const pointerLocked = typeof document !== "undefined" && Boolean(document.pointerLockElement);
+  const mouseSteer =
+    settings.controlPreset === "modernized" && pointerLocked && Math.abs(moveForward) > 0.001
+      ? clamp(look.aimYaw / 0.45, -1, 1)
+      : 0;
   const payload = {
-    moveForward:
-      (isBindingActive(keys, bindings.moveForwardPositive) ? 1 : 0) +
-      (isBindingActive(keys, bindings.moveForwardNegative) ? -1 : 0),
-    turnBody:
-      (isBindingActive(keys, bindings.turnRight) ? 1 : 0) +
-      (isBindingActive(keys, bindings.turnLeft) ? -1 : 0),
+    moveForward,
+    turnBody: clamp(keyTurn + mouseSteer, -1, 1),
     aimYaw: look.aimYaw,
     aimPitch: look.aimPitch,
     stanceDelta: stanceDeltaRef.current,

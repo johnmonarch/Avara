@@ -89,7 +89,7 @@ const SMART_MISSILE_MOUNT_OFFSET = { x: 0, y: 0.45, z: 0.6 };
 const GRENADE_MOUNT_OFFSET = { x: 0, y: -0.2, z: 0.95 };
 const SMART_MISSILE_TARGET_RANGE = 160;
 const BSP_FORWARD_YAW_OFFSET = -Math.PI / 2;
-const FIRST_PERSON_HULL_OFFSET = { x: 0, y: -0.28, z: -0.54 };
+const FIRST_PERSON_HULL_OFFSET = { x: 0, y: -0.42, z: -0.88 };
 const FIRST_PERSON_SMART_MISSILE_MOUNT_OFFSET = { x: 0, y: 0.45, z: -0.6 };
 const FIRST_PERSON_GRENADE_MOUNT_OFFSET = { x: 0, y: -0.2, z: -0.95 };
 const PLAYER_PLASMA_RANGE = 150;
@@ -1443,10 +1443,14 @@ function createFirstPersonCockpitRig(): THREE.Group {
   root.visible = false;
   root.rotation.y = BSP_FORWARD_YAW_OFFSET;
 
+  const hullAnchor = new THREE.Group();
+  hullAnchor.name = "first-person-hull-anchor";
+  hullAnchor.position.set(FIRST_PERSON_HULL_OFFSET.x, FIRST_PERSON_HULL_OFFSET.y, FIRST_PERSON_HULL_OFFSET.z);
+  root.add(hullAnchor);
+
   const hull = new THREE.Group();
   hull.name = "first-person-hull";
-  hull.position.set(FIRST_PERSON_HULL_OFFSET.x, FIRST_PERSON_HULL_OFFSET.y, FIRST_PERSON_HULL_OFFSET.z);
-  root.add(hull);
+  hullAnchor.add(hull);
 
   const hullPalette: MarkerPalette = {
     marker0: "#7a5c25",
@@ -1455,7 +1459,7 @@ function createFirstPersonCockpitRig(): THREE.Group {
     marker3: "#161616",
     fallback: "#7a5c25"
   };
-  attachBspRenderable(hull, LIVE_ASSET_URLS.hector, hullPalette);
+  syncBspRenderable(hull, LIVE_ASSET_URLS.hector, hullPalette);
 
   const loadedMissile = new THREE.Group();
   loadedMissile.name = "first-person-loaded-missile";
@@ -1464,7 +1468,7 @@ function createFirstPersonCockpitRig(): THREE.Group {
     FIRST_PERSON_SMART_MISSILE_MOUNT_OFFSET.y,
     FIRST_PERSON_SMART_MISSILE_MOUNT_OFFSET.z
   );
-  hull.add(loadedMissile);
+  hullAnchor.add(loadedMissile);
   attachBspRenderable(loadedMissile, LIVE_ASSET_URLS.missile, createProjectilePalette("missile"));
 
   const loadedGrenade = new THREE.Group();
@@ -1474,7 +1478,7 @@ function createFirstPersonCockpitRig(): THREE.Group {
     FIRST_PERSON_GRENADE_MOUNT_OFFSET.y,
     FIRST_PERSON_GRENADE_MOUNT_OFFSET.z
   );
-  hull.add(loadedGrenade);
+  hullAnchor.add(loadedGrenade);
   attachBspRenderable(loadedGrenade, LIVE_ASSET_URLS.grenade, createProjectilePalette("grenade"));
 
   return root;
@@ -1491,9 +1495,27 @@ function updateFirstPersonCockpitRig(
     return;
   }
 
+  const hullPalette: MarkerPalette = {
+    marker0: "#7a5c25",
+    marker1: "#5b4521",
+    marker2: "#a7d8ff",
+    marker3: "#161616",
+    fallback: "#7a5c25"
+  };
+  const hullVisual = root.getObjectByName("first-person-hull");
+  if (hullVisual instanceof THREE.Group) {
+    syncBspRenderable(hullVisual, player.shapeAssetUrl ?? LIVE_ASSET_URLS.hector, hullPalette);
+  }
+
+  const hullAnchor = root.getObjectByName("first-person-hull-anchor");
+  if (hullAnchor) {
+    hullAnchor.position.set(FIRST_PERSON_HULL_OFFSET.x, FIRST_PERSON_HULL_OFFSET.y, FIRST_PERSON_HULL_OFFSET.z);
+  }
+
   const hull = root.getObjectByName("first-person-hull");
   if (hull) {
-    hull.position.set(FIRST_PERSON_HULL_OFFSET.x, FIRST_PERSON_HULL_OFFSET.y, FIRST_PERSON_HULL_OFFSET.z);
+    hull.rotation.order = "ZXY";
+    hull.rotation.set(player.turretPitch * 0.15, 0, 0);
   }
 
   const loadedMissile = root.getObjectByName("first-person-loaded-missile");
@@ -1505,6 +1527,65 @@ function updateFirstPersonCockpitRig(
   if (loadedGrenade) {
     loadedGrenade.visible = player.weaponLoad === "grenade";
   }
+}
+
+function syncBspRenderable(
+  root: THREE.Group,
+  url: string,
+  palette: MarkerPalette,
+  options?: { preRotateY?: number }
+): void {
+  if (root.userData.renderableUrl === url) {
+    return;
+  }
+
+  root.userData.renderableUrl = url;
+  const loadToken = Number(root.userData.renderableLoadToken ?? 0) + 1;
+  root.userData.renderableLoadToken = loadToken;
+  root.clear();
+
+  const resolved = resolvedRenderableCache.get(url);
+  if (resolved) {
+    const group = buildPaletteRenderableGroup(resolved, palette, options);
+    root.add(group);
+    return;
+  }
+
+  void loadBspRenderable(url)
+    .then((renderable) => {
+      if (root.userData.renderableLoadToken !== loadToken) {
+        return;
+      }
+      root.clear();
+      root.add(buildPaletteRenderableGroup(renderable, palette, options));
+    })
+    .catch(() => undefined);
+}
+
+function buildPaletteRenderableGroup(
+  renderable: BspRenderableData,
+  palette: MarkerPalette,
+  options?: { preRotateY?: number }
+): THREE.Group {
+  const group = new THREE.Group();
+  if (options?.preRotateY) {
+    group.rotation.y = options.preRotateY;
+  }
+
+  for (const part of renderable.groups) {
+    const color = resolveRenderableColor(part.baseToken, part.baseColor, palette);
+    const mesh = new THREE.Mesh(
+      part.geometry,
+      new THREE.MeshStandardMaterial({
+        color,
+        metalness: 0.14,
+        roughness: 0.66
+      })
+    );
+    group.add(mesh);
+  }
+
+  return group;
 }
 
 function getPlayerViewTargetHeight(player: SnapshotPlayerState): number {
@@ -1610,25 +1691,7 @@ function attachBspRenderable(
 ): void {
   void loadBspRenderable(url)
     .then((renderable) => {
-      const group = new THREE.Group();
-      if (options?.preRotateY) {
-        group.rotation.y = options.preRotateY;
-      }
-
-      for (const part of renderable.groups) {
-        const color = resolveRenderableColor(part.baseToken, part.baseColor, palette);
-        const mesh = new THREE.Mesh(
-          part.geometry,
-          new THREE.MeshStandardMaterial({
-            color,
-            metalness: 0.14,
-            roughness: 0.66
-          })
-        );
-        group.add(mesh);
-      }
-
-      root.add(group);
+      root.add(buildPaletteRenderableGroup(renderable, palette, options));
     })
     .catch(() => undefined);
 }

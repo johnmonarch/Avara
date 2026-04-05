@@ -9,7 +9,7 @@ export const CONTROL_PRESETS: ControlPreset[] = [
   {
     id: "modernized",
     label: "Modernized",
-    description: "Keep the mech feel but add extra key aliases, contextual prompts, and lower-friction first-play guidance."
+    description: "Keep the mech feel but let mouse aim steer your walking direction, while preserving the classic weapon and jump timing."
   }
 ];
 
@@ -33,7 +33,7 @@ export const CONTROL_PRESET_BINDINGS: Record<ControlPreset["id"], ControlBinding
   ],
   modernized: [
     { action: "Drive", keys: "W / S or Up / Down" },
-    { action: "Rotate legs", keys: "A / D or Left / Right" },
+    { action: "Steer body", keys: "Mouse while moving, or A / D" },
     { action: "Aim turret", keys: "Mouse" },
     { action: "Vertical motion", keys: "Left Ctrl + Mouse" },
     { action: "Primary fire", keys: "Left click" },
