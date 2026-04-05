@@ -91,7 +91,7 @@ const SMART_MISSILE_MOUNT_OFFSET = { x: 0, y: 0.45, z: 0.6 };
 const GRENADE_MOUNT_OFFSET = { x: 0, y: -0.2, z: 0.95 };
 const SMART_MISSILE_TARGET_RANGE = 160;
 const BSP_FORWARD_YAW_OFFSET = -Math.PI / 2;
-const FIRST_PERSON_HULL_OFFSET = { x: 0, y: -0.64, z: -1.18 };
+const FIRST_PERSON_HULL_OFFSET = { x: 0, y: -0.38, z: -0.94 };
 const FIRST_PERSON_SMART_MISSILE_MOUNT_OFFSET = { x: 0, y: 0.45, z: -0.6 };
 const FIRST_PERSON_GRENADE_MOUNT_OFFSET = { x: 0, y: -0.2, z: -0.95 };
 const PLAYER_PLASMA_RANGE = 150;
@@ -1486,7 +1486,7 @@ function createFirstPersonCockpitRig(): THREE.Group {
     marker3: "#161616",
     fallback: "#7a5c25"
   };
-  syncBspRenderable(hull, LIVE_ASSET_URLS.hectorHead, hullPalette);
+  syncBspRenderable(hull, LIVE_ASSET_URLS.hector, hullPalette);
 
   const loadedMissile = new THREE.Group();
   loadedMissile.name = "first-person-loaded-missile";
@@ -1531,7 +1531,7 @@ function updateFirstPersonCockpitRig(
   };
   const hullVisual = root.getObjectByName("first-person-hull");
   if (hullVisual instanceof THREE.Group) {
-    syncBspRenderable(hullVisual, LIVE_ASSET_URLS.hectorHead, hullPalette);
+    syncBspRenderable(hullVisual, player.shapeAssetUrl ?? LIVE_ASSET_URLS.hector, hullPalette);
   }
 
   const hullAnchor = root.getObjectByName("first-person-hull-anchor");
@@ -1542,7 +1542,7 @@ function updateFirstPersonCockpitRig(
   const hull = root.getObjectByName("first-person-hull");
   if (hull) {
     hull.rotation.order = "ZXY";
-    hull.rotation.set(player.turretPitch * 0.24, 0, 0);
+    hull.rotation.set(player.turretPitch * 0.12, 0, 0);
   }
 
   const loadedMissile = root.getObjectByName("first-person-loaded-missile");

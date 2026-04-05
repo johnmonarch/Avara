@@ -1458,6 +1458,10 @@ function isBindingActive(keys: Record<string, boolean>, codes: string[]): boolea
   return codes.some((code) => Boolean(keys[code]));
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
 function playerSettingsEqual(left: PlayerSettings, right: PlayerSettings): boolean {
   return (
     left.controlPreset === right.controlPreset &&
