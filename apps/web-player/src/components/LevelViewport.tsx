@@ -1350,8 +1350,8 @@ function updateWalkerAssemblyPose(root: THREE.Group, player: SnapshotPlayerState
   const hull = root.getObjectByName("walker-hull");
   if (hull) {
     hull.position.set(0, hipHeight + rideHeight, 0);
-    hull.rotation.order = "YXZ";
-    hull.rotation.set(-player.turretPitch, yawDelta, -yawDelta / 6);
+    hull.rotation.order = "ZXY";
+    hull.rotation.set(player.turretPitch, yawDelta, -yawDelta / 6);
   }
 
   const loadedMissile = root.getObjectByName("walker-loaded-missile");

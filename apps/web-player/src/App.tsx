@@ -451,7 +451,7 @@ export function App() {
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (bindings.scoutViewKeys.includes(event.code)) {
-        if (!event.repeat) {
+        if (!event.repeat && document.pointerLockElement && connectedRoomId) {
           queuedActionRef.current.toggleScoutView = true;
         }
         event.preventDefault();
@@ -510,6 +510,12 @@ export function App() {
     const onBlur = () => {
       keyStateRef.current = {};
       fireActiveRef.current = false;
+      queuedActionRef.current = {
+        loadMissile: false,
+        loadGrenade: false,
+        toggleScoutView: false,
+        scoutCommand: null
+      };
     };
 
     document.addEventListener("keydown", onKeyDown, true);
@@ -525,7 +531,7 @@ export function App() {
       window.removeEventListener("mouseup", onMouseUp);
       window.removeEventListener("blur", onBlur);
     };
-  }, [playerSettings.controlPreset]);
+  }, [connectedRoomId, playerSettings.controlPreset]);
 
   useEffect(() => {
     if (!identity || !connectedRoom || !scene || scene.id !== connectedRoom.levelId) {
