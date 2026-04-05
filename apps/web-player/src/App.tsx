@@ -39,6 +39,7 @@ import {
   trackAdEvent,
   updatePlayerSettings
 } from "./lib/api";
+import { useAvaraSoundscape } from "./lib/sound";
 
 const LevelViewport = lazy(() => import("./components/LevelViewport"));
 const reconnectStorageKey = "avara-room-reconnect";
@@ -216,6 +217,14 @@ export function App() {
       : featuredLevel
         ? `You are looking at the imported ${featuredLevel.title} geometry only. Create a room first to spawn a playable Hector.`
         : "No imported level is active yet.";
+
+  useAvaraSoundscape({
+    scene,
+    snapshot,
+    localPlayerId,
+    roomActive: Boolean(connectedRoomId),
+    pointerLocked
+  });
 
   useEffect(() => {
     if (pointerLocked && connectedRoom && !onboardingDismissed) {

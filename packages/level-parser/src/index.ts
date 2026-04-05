@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-import type { LevelScene, LevelSummary, SceneLocalBounds, SceneNode } from "@avara/shared-types";
+import type { LevelScene, LevelSummary, SceneLocalBounds, SceneNode, SceneSound } from "@avara/shared-types";
 
 const CURATED_PACK_PRIORITY = [
   "avaraline-strict-mode",
@@ -125,6 +125,9 @@ export async function parseLevelScene(levelsRoot: string, levelId: string): Prom
     skyColors: ["#9bd7ff", "#d5e7ff"],
     groundColor: "#2c3138"
   };
+  const soundscape = {
+    ambient: [] as SceneSound[]
+  };
   const nodes: SceneNode[] = [];
   const context = { ...scriptContext, wallHeight: 1, wallYon: 0.01 };
   const state: ParseState = {};
@@ -135,10 +138,18 @@ export async function parseLevelScene(levelsRoot: string, levelId: string): Prom
     packDir: resolved.packDir,
     levelsRoot,
     environment,
+    soundscape,
     nodes,
     context,
     state
   });
+
+  const incarnateSoundId = readIntegerSetting(context, "incarnateSound", 411);
+  const blastSoundDefaultId = readIntegerSetting(context, "blastSoundDefault", 230);
+  const [incarnateSoundAsset, blastSoundDefaultAsset] = await Promise.all([
+    resolveSoundAsset(incarnateSoundId, resolved.packDir, levelsRoot),
+    resolveSoundAsset(blastSoundDefaultId, resolved.packDir, levelsRoot)
+  ]);
 
   return {
     id: resolved.summary.id,
@@ -146,6 +157,7 @@ export async function parseLevelScene(levelsRoot: string, levelId: string): Prom
     packSlug: resolved.summary.packSlug,
     entryPath: resolved.summary.alfPath,
     environment,
+    soundscape,
     settings: {
       gravity: readNumericSetting(context, "gravity", 1),
       defaultTraction: readNumericSetting(context, "defaultTraction", 0.4),
@@ -157,7 +169,12 @@ export async function parseLevelScene(levelsRoot: string, levelId: string): Prom
       maxStartGrenades: readIntegerSetting(context, "maxStartGrenades", 20),
       maxStartMissiles: readIntegerSetting(context, "maxStartMissiles", 10),
       maxStartBoosts: readIntegerSetting(context, "maxStartBoosts", 5),
-      defaultLives: readIntegerSetting(context, "defaultLives", 3)
+      defaultLives: readIntegerSetting(context, "defaultLives", 3),
+      incarnateSoundId,
+      incarnateSoundUrl: incarnateSoundAsset?.assetUrl,
+      incarnateVolume: readNumericSetting(context, "incarnateVolume", 12),
+      blastSoundDefaultId,
+      blastSoundDefaultUrl: blastSoundDefaultAsset?.assetUrl
     },
     nodes
   };
@@ -168,6 +185,7 @@ async function collectSceneFromFile(input: {
   packDir: string;
   levelsRoot: string;
   environment: { skyColors: string[]; groundColor: string };
+  soundscape: { ambient: SceneSound[] };
   nodes: SceneNode[];
   context: ScriptContext;
   state: ParseState;
@@ -212,6 +230,14 @@ async function collectSceneFromFile(input: {
 
     if (tag.name === "GroundColor") {
       input.environment.groundColor = sanitizeColor(tag.attributes.color ?? "#2c3138");
+      continue;
+    }
+
+    if (tag.name === "Sound") {
+      const sound = await parseSceneSound(tag, input.packDir, input.levelsRoot, input.context);
+      if (sound?.ambient) {
+        input.soundscape.ambient.push(sound.track);
+      }
       continue;
     }
 
@@ -505,6 +531,41 @@ async function resolveShapeAsset(
   return undefined;
 }
 
+async function resolveSoundAsset(
+  soundId: number,
+  packDir: string,
+  levelsRoot: string
+): Promise<{ assetUrl: string; filePath: string } | undefined> {
+  const localPackFile = path.join(packDir, "ogg", `${soundId}.ogg`);
+  if (await pathExists(localPackFile)) {
+    return {
+      assetUrl: toApiContentPath(localPackFile, levelsRoot),
+      filePath: localPackFile
+    };
+  }
+
+  const workspaceRoot = path.dirname(levelsRoot);
+  const rootSoundFile = path.join(workspaceRoot, "rsrc", "ogg", `${soundId}.ogg`);
+  if (await pathExists(rootSoundFile)) {
+    return {
+      assetUrl: toApiContentPath(rootSoundFile, levelsRoot),
+      filePath: rootSoundFile
+    };
+  }
+
+  for (const directory of await listSupplementalResourceSoundDirectories(workspaceRoot)) {
+    const nestedSoundFile = path.join(directory, `${soundId}.ogg`);
+    if (await pathExists(nestedSoundFile)) {
+      return {
+        assetUrl: toApiContentPath(nestedSoundFile, levelsRoot),
+        filePath: nestedSoundFile
+      };
+    }
+  }
+
+  return undefined;
+}
+
 async function buildCatalogMap(levelsRoot: string): Promise<Map<string, LevelCatalogEntry>> {
   const summaries = await discoverLevelCatalog(levelsRoot);
   const catalog = new Map<string, LevelCatalogEntry>();
@@ -521,6 +582,7 @@ async function buildCatalogMap(levelsRoot: string): Promise<Map<string, LevelCat
 
 const supplementalBspDirectoryCache = new Map<string, Promise<string[]>>();
 const shapeBoundsCache = new Map<string, Promise<SceneLocalBounds | undefined>>();
+const supplementalSoundDirectoryCache = new Map<string, Promise<string[]>>();
 
 async function loadPackScriptContext(levelsRoot: string, packDir: string): Promise<ScriptContext> {
   const context: ScriptContext = {};
@@ -586,6 +648,71 @@ async function listSupplementalResourceBspDirectories(workspaceRoot: string): Pr
 
   supplementalBspDirectoryCache.set(workspaceRoot, pending);
   return pending;
+}
+
+async function listSupplementalResourceSoundDirectories(workspaceRoot: string): Promise<string[]> {
+  const cached = supplementalSoundDirectoryCache.get(workspaceRoot);
+  if (cached) {
+    return cached;
+  }
+
+  const pending = (async () => {
+    const rsrcRoot = path.join(workspaceRoot, "rsrc");
+    const entries = await readdirSafe(rsrcRoot);
+    const directories: string[] = [];
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+
+      const soundDirectory = path.join(rsrcRoot, entry.name, "ogg");
+      if (await pathExists(soundDirectory)) {
+        directories.push(soundDirectory);
+      }
+    }
+
+    return directories;
+  })();
+
+  supplementalSoundDirectoryCache.set(workspaceRoot, pending);
+  return pending;
+}
+
+async function parseSceneSound(
+  tag: ParsedTag,
+  packDir: string,
+  levelsRoot: string,
+  context: ScriptContext
+): Promise<{ ambient: true; track: SceneSound } | null> {
+  const evaluated = Object.fromEntries(
+    Object.entries(tag.attributes).map(([key, value]) => [key, resolveAttributeValue(value, context)])
+  );
+
+  if (evaluated.isAmbient !== true) {
+    return null;
+  }
+
+  const soundId = typeof evaluated.sound === "number" ? evaluated.sound : parseNumericShape(asString(evaluated.sound) ?? "");
+  if (!soundId || soundId <= 0) {
+    return null;
+  }
+
+  const asset = await resolveSoundAsset(soundId, packDir, levelsRoot);
+  return {
+    ambient: true,
+    track: {
+      soundId,
+      assetUrl: asset?.assetUrl,
+      volume: readVolumeSetting(evaluated.volume, 100),
+      loop: toNumber(evaluated.loopCount, -1) < 0,
+      position: {
+        x: toNumber(evaluated.cx ?? evaluated.x, 0),
+        y: toNumber(evaluated.y, 0),
+        z: toNumber(evaluated.cz ?? evaluated.z, 0)
+      }
+    }
+  };
 }
 
 async function readShapeBounds(filePath: string): Promise<SceneLocalBounds | undefined> {
@@ -805,6 +932,11 @@ function isAdBillboardMarker(attributes: Record<string, unknown>): boolean {
 
 function toNumber(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function readVolumeSetting(value: unknown, fallback: number): number {
+  const numeric = toNumber(value, fallback);
+  return Math.max(0, numeric);
 }
 
 function readNumericSetting(context: ScriptContext, key: string, fallback: number): number {

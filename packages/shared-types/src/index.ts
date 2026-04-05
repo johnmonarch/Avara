@@ -88,6 +88,18 @@ export interface SceneEnvironment {
   groundColor: string;
 }
 
+export interface SceneSound {
+  soundId: number;
+  assetUrl?: string;
+  volume: number;
+  loop: boolean;
+  position?: { x: number; y: number; z: number };
+}
+
+export interface SceneSoundscape {
+  ambient: SceneSound[];
+}
+
 export interface SceneLocalBounds {
   min: { x: number; y: number; z: number };
   max: { x: number; y: number; z: number };
@@ -129,6 +141,7 @@ export interface LevelScene {
   packSlug: string;
   entryPath: string;
   environment: SceneEnvironment;
+  soundscape: SceneSoundscape;
   settings: LevelSimulationSettings;
   nodes: SceneNode[];
 }
@@ -145,6 +158,11 @@ export interface LevelSimulationSettings {
   maxStartMissiles: number;
   maxStartBoosts: number;
   defaultLives: number;
+  incarnateSoundId: number;
+  incarnateSoundUrl?: string;
+  incarnateVolume: number;
+  blastSoundDefaultId: number;
+  blastSoundDefaultUrl?: string;
 }
 
 export interface RoomSummary {
