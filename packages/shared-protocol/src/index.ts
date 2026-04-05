@@ -117,6 +117,22 @@ export interface SnapshotProjectileState {
   accentColor?: string;
 }
 
+export interface SnapshotFragmentState {
+  id: string;
+  x: number;
+  y: number;
+  z: number;
+  yaw?: number;
+  pitch?: number;
+  roll?: number;
+  shapeId?: number;
+  shapeKey?: string;
+  shapeAssetUrl?: string;
+  scale?: number;
+  color?: string;
+  accentColor?: string;
+}
+
 export interface SnapshotPickupState {
   id: string;
   kind: PickupKind;
@@ -150,6 +166,7 @@ export interface SnapshotPacket {
   players: SnapshotPlayerState[];
   scouts: SnapshotScoutState[];
   projectiles: SnapshotProjectileState[];
+  fragments: SnapshotFragmentState[];
   pickups: SnapshotPickupState[];
   events: MatchEventState[];
   remainingSeconds: number;

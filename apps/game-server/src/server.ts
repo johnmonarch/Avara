@@ -15,6 +15,7 @@ import type {
   PickupKind,
   ProjectileKind,
   ScoutCommand,
+  SnapshotFragmentState,
   SnapshotPacket,
   SnapshotPickupState,
   SnapshotPlayerState,
@@ -50,6 +51,16 @@ const PICKUP_RESPAWN_TICKS = tickRate * pickupRespawnSeconds;
 const DISCONNECT_GRACE_TICKS = tickRate * disconnectGraceSeconds;
 const CLASSIC_FRAME_SECONDS = 0.064;
 const ROOT_BSP_CONTENT_PREFIX = "/content/rsrc/bsps";
+const BSP_EXPLOSION_SLIVER = {
+  shapeId: 500,
+  shapeKey: "bspSliverS",
+  shapeAssetUrl: `${ROOT_BSP_CONTENT_PREFIX}/500.json`
+} as const;
+const EXPLOSION_FRAGMENT_COUNT = 15;
+const EXPLOSION_FRAGMENT_LIFETIME_CLASSIC_FRAMES = 20;
+const FRAGMENT_FRICTION = 0.98;
+const FRAGMENT_GRAVITY = 0.02;
+const WEAPON_EXPLOSION_FRAGMENT_COLORS = ["#ff2600", "#fffb00"] as const;
 const PLAYER_PLASMA_SPEED = 6;
 const PLAYER_PLASMA_LIFETIME_CLASSIC_FRAMES = 25;
 const PLAYER_PLASMA_RANGE = PLAYER_PLASMA_SPEED * PLAYER_PLASMA_LIFETIME_CLASSIC_FRAMES;
@@ -274,6 +285,29 @@ interface ProjectileState {
   scale: number;
 }
 
+interface FragmentState {
+  id: string;
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  remainingTicks: number;
+  yaw: number;
+  pitch: number;
+  roll: number;
+  spin: number;
+  friction: number;
+  gravity: number;
+  shapeId: number;
+  shapeKey: string;
+  shapeAssetUrl: string;
+  scale: number;
+  color?: string;
+  accentColor?: string;
+}
+
 interface PlayerInputState {
   moveForward: number;
   turnBody: number;
@@ -403,6 +437,7 @@ interface RoomState {
   collisionTriangleBuffer: Float64Array;
   pickups: PickupState[];
   projectiles: ProjectileState[];
+  fragments: FragmentState[];
   players: Map<string, PlayerState>;
   scouts: Map<string, ScoutState>;
   settings: LevelSimulationSettings;
@@ -444,6 +479,7 @@ setInterval(() => {
     simulateScouts(room, dt);
     processPickups(room);
     simulateProjectiles(room, dt);
+    simulateFragments(room, dt);
     maybeCompleteMatchOnTime(room);
   }
 }, 1000 / tickRate);
@@ -702,6 +738,7 @@ async function createRoomState(roomId: string, scene: LevelScene, maxPlayers: nu
     collisionTriangleBuffer,
     pickups: derivePickups(scene.nodes),
     projectiles: [],
+    fragments: [],
     players: new Map(),
     scouts: new Map(),
     settings: scene.settings,
@@ -1912,6 +1949,37 @@ function simulateProjectiles(room: RoomState, _dt: number): void {
   room.projectiles = survivors;
 }
 
+function simulateFragments(room: RoomState, _dt: number): void {
+  const fpsScale = tickDeltaScale();
+  const survivors: FragmentState[] = [];
+
+  for (const fragment of room.fragments) {
+    fragment.x += fpsCoefficient2(fragment.vx, fpsScale);
+    fragment.y += fpsCoefficient2(fragment.vy, fpsScale);
+    fragment.z += fpsCoefficient2(fragment.vz, fpsScale);
+
+    if (fragment.y < 0) {
+      fragment.y = -fragment.y;
+      fragment.vy *= -0.6;
+    }
+
+    fragment.vx *= fragment.friction;
+    fragment.vy = fragment.vy * fragment.friction - fpsCoefficient2(fragment.gravity * room.settings.gravity, fpsScale);
+    fragment.vz *= fragment.friction;
+
+    fragment.yaw = Math.atan2(fragment.vz, fragment.vx);
+    fragment.pitch = Math.atan2(fragment.vy, Math.hypot(fragment.vx, fragment.vz) || 1);
+    fragment.roll += fpsCoefficient2(fragment.spin, fpsScale);
+    fragment.remainingTicks -= 1;
+
+    if (fragment.remainingTicks > 0) {
+      survivors.push(fragment);
+    }
+  }
+
+  room.fragments = survivors;
+}
+
 function acquireMissileTarget(room: RoomState, player: PlayerState, forward: { x: number; y: number; z: number }): string | undefined {
   const target = findTargetInCone(
     room,
@@ -2359,6 +2427,7 @@ function rayBlocked(room: RoomState, origin: Vec3, target: Vec3): boolean {
 }
 
 function explodeProjectile(room: RoomState, projectile: ProjectileState): void {
+  spawnExplosionFragments(room, projectile);
   const owner = room.players.get(projectile.ownerId);
   const blastRadius = Math.sqrt(Math.max(projectile.blastPower, 0) * 64);
   for (const player of room.players.values()) {
@@ -2387,6 +2456,38 @@ function explodeProjectile(room: RoomState, projectile: ProjectileState): void {
     if (blastEnergy > 1 / 64) {
       applyScoutDamage(room, scout, shieldUnitsToHealth(blastEnergy, SCOUT_SHIELD), owner ?? null);
     }
+  }
+}
+
+function spawnExplosionFragments(room: RoomState, projectile: ProjectileState): void {
+  const fpsScale = tickDeltaScale();
+  for (let index = 0; index < EXPLOSION_FRAGMENT_COUNT; index += 1) {
+    const direction = sampleExplosionFragmentDirection();
+    const speed = Math.max(0.35, projectile.blastPower * 2 * (0.35 + Math.random() * 0.85));
+    const color = WEAPON_EXPLOSION_FRAGMENT_COLORS[Math.floor(Math.random() * WEAPON_EXPLOSION_FRAGMENT_COLORS.length)];
+
+    room.fragments.push({
+      id: `fragment_${crypto.randomUUID()}`,
+      x: projectile.x,
+      y: projectile.y,
+      z: projectile.z,
+      vx: direction.x * speed,
+      vy: direction.y * speed,
+      vz: direction.z * speed,
+      remainingTicks: framesFromClassic(EXPLOSION_FRAGMENT_LIFETIME_CLASSIC_FRAMES, fpsScale),
+      yaw: Math.atan2(direction.z, direction.x),
+      pitch: Math.atan2(direction.y, Math.hypot(direction.x, direction.z) || 1),
+      roll: Math.random() * Math.PI * 2,
+      spin: (Math.random() - 0.5) * Math.PI * 8,
+      friction: FRAGMENT_FRICTION,
+      gravity: FRAGMENT_GRAVITY,
+      shapeId: BSP_EXPLOSION_SLIVER.shapeId,
+      shapeKey: BSP_EXPLOSION_SLIVER.shapeKey,
+      shapeAssetUrl: BSP_EXPLOSION_SLIVER.shapeAssetUrl,
+      scale: 1,
+      color,
+      accentColor: darkenColor(color, 0.22)
+    });
   }
 }
 
@@ -2491,6 +2592,7 @@ function endMatch(room: RoomState, winnerPlayerId: string | undefined, message: 
   room.status = "ended";
   room.winnerPlayerId = winnerPlayerId;
   room.projectiles = [];
+  room.fragments = [];
   room.scouts.clear();
   for (const player of room.players.values()) {
     player.scoutView = false;
@@ -2513,6 +2615,7 @@ function buildSnapshot(room: RoomState): SnapshotPacket {
     players: Array.from(room.players.values()).map(toSnapshotPlayer(room)),
     scouts: Array.from(room.scouts.values()).map(toSnapshotScout),
     projectiles: room.projectiles.map(toSnapshotProjectile),
+    fragments: room.fragments.map(toSnapshotFragment),
     pickups: room.pickups.map(toSnapshotPickup(room)),
     events: room.events.slice(-8),
     remainingSeconds: getRemainingSeconds(room),
@@ -2591,6 +2694,24 @@ function toSnapshotProjectile(projectile: ProjectileState): SnapshotProjectileSt
     shapeKey: projectile.shapeKey,
     shapeAssetUrl: projectile.shapeAssetUrl,
     scale: projectile.scale
+  };
+}
+
+function toSnapshotFragment(fragment: FragmentState): SnapshotFragmentState {
+  return {
+    id: fragment.id,
+    x: fragment.x,
+    y: fragment.y,
+    z: fragment.z,
+    yaw: fragment.yaw,
+    pitch: fragment.pitch,
+    roll: fragment.roll,
+    shapeId: fragment.shapeId,
+    shapeKey: fragment.shapeKey,
+    shapeAssetUrl: fragment.shapeAssetUrl,
+    scale: fragment.scale,
+    color: fragment.color,
+    accentColor: fragment.accentColor
   };
 }
 
@@ -3337,6 +3458,36 @@ function rightVectorFromYawPitch(yaw: number, pitch: number) {
     y: right.y / length,
     z: right.z / length
   };
+}
+
+function sampleExplosionFragmentDirection() {
+  const yaw = Math.random() * Math.PI * 2;
+  const pitch = (Math.random() - 0.1) * (Math.PI * 0.9);
+  const direction = {
+    x: Math.cos(yaw) * Math.cos(pitch),
+    y: Math.max(0.08, Math.sin(pitch) + 0.55),
+    z: Math.sin(yaw) * Math.cos(pitch)
+  };
+  const length = Math.hypot(direction.x, direction.y, direction.z) || 1;
+  return {
+    x: direction.x / length,
+    y: direction.y / length,
+    z: direction.z / length
+  };
+}
+
+function darkenColor(color: string, factor: number): string {
+  const normalized = color.startsWith("#") ? color.slice(1) : color;
+  if (normalized.length !== 6) {
+    return color;
+  }
+
+  const channel = (offset: number) =>
+    Math.max(0, Math.min(255, Math.round(parseInt(normalized.slice(offset, offset + 2), 16) * (1 - factor))));
+
+  return `#${channel(0).toString(16).padStart(2, "0")}${channel(2).toString(16).padStart(2, "0")}${channel(4)
+    .toString(16)
+    .padStart(2, "0")}`;
 }
 
 function computeProjectileMountOrigin(

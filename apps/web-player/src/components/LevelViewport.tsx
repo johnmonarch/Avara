@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 
 import type {
+  SnapshotFragmentState,
   SnapshotScoutState,
   SnapshotPacket,
   SnapshotPickupState,
@@ -71,7 +72,8 @@ const LIVE_ASSET_URLS = {
   hectorLegLow: `${ROOT_BSP_CONTENT_PREFIX}/212.json`,
   plasma: `${ROOT_BSP_CONTENT_PREFIX}/203.json`,
   missile: `${ROOT_BSP_CONTENT_PREFIX}/802.json`,
-  grenade: `${ROOT_BSP_CONTENT_PREFIX}/820.json`
+  grenade: `${ROOT_BSP_CONTENT_PREFIX}/820.json`,
+  sliverSmall: `${ROOT_BSP_CONTENT_PREFIX}/500.json`
 } as const;
 const PRELOAD_ASSET_URLS = Object.values(LIVE_ASSET_URLS);
 const SCOUT_CAMERA_OFFSET = 0.1;
@@ -352,9 +354,10 @@ export default function LevelViewport({
     const billboardLayer = new THREE.Group();
     const pickupLayer = new THREE.Group();
     const projectileLayer = new THREE.Group();
+    const fragmentLayer = new THREE.Group();
     const scoutLayer = new THREE.Group();
     const playerLayer = new THREE.Group();
-    threeScene.add(billboardLayer, pickupLayer, projectileLayer, scoutLayer, playerLayer);
+    threeScene.add(billboardLayer, pickupLayer, projectileLayer, fragmentLayer, scoutLayer, playerLayer);
     const cockpitRig = createFirstPersonCockpitRig();
     camera.add(cockpitRig);
 
@@ -362,6 +365,7 @@ export default function LevelViewport({
     const billboardMeshes = new Map<string, THREE.Group>();
     const pickupMeshes = new Map<string, THREE.Object3D>();
     const projectileMeshes = new Map<string, THREE.Object3D>();
+    const fragmentMeshes = new Map<string, THREE.Object3D>();
     const scoutMeshes = new Map<string, THREE.Object3D>();
     const playerMeshes = new Map<string, THREE.Object3D>();
 
@@ -440,11 +444,13 @@ export default function LevelViewport({
       syncBillboardMeshes(billboardLayer, billboardMeshes, billboardNodes, billboardRef.current);
       syncPickupMeshes(pickupLayer, pickupMeshes, currentSnapshot?.pickups ?? []);
       syncProjectileMeshes(projectileLayer, projectileMeshes, currentSnapshot?.projectiles ?? []);
+      syncFragmentMeshes(fragmentLayer, fragmentMeshes, currentSnapshot?.fragments ?? []);
       syncScoutMeshes(scoutLayer, scoutMeshes, currentSnapshot?.scouts ?? [], localPlayerIdRef.current);
       syncPlayerMeshes(playerLayer, playerMeshes, currentSnapshot?.players ?? [], localPlayerIdRef.current);
       smoothDynamicObjects(playerMeshes, frameDelta);
       smoothDynamicObjects(scoutMeshes, frameDelta);
       smoothDynamicObjects(projectileMeshes, frameDelta, 0.82);
+      smoothDynamicObjects(fragmentMeshes, frameDelta, 0.82);
 
       const liveLocalPlayer = currentSnapshot?.players.find((player) => player.id === localPlayerIdRef.current) ?? null;
       const liveLocalScout = currentSnapshot?.scouts.find((scout) => scout.ownerPlayerId === localPlayerIdRef.current) ?? null;
@@ -1121,6 +1127,21 @@ function queueObjectTransform(object: THREE.Object3D, x: number, y: number, z: n
   object.userData.targetYaw = targetYaw;
 }
 
+function queueForwardOrientation(object: THREE.Object3D, yaw: number, pitch: number, roll = 0): void {
+  const forward = directionFromYawPitch(yaw, pitch);
+  const forwardVector = new THREE.Vector3(forward.x, forward.y, forward.z).normalize();
+  const targetQuaternion = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), forwardVector);
+  const rollQuaternion = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), roll);
+  targetQuaternion.multiply(rollQuaternion);
+
+  if (object.userData.initializedQuaternion !== true) {
+    object.quaternion.copy(targetQuaternion);
+    object.userData.initializedQuaternion = true;
+  }
+
+  object.userData.targetQuaternion = targetQuaternion;
+}
+
 function smoothDynamicObjects(
   cache: Map<string, THREE.Object3D>,
   frameDelta: number,
@@ -1139,6 +1160,9 @@ function smoothDynamicObjects(
       object.rotation.y = normalizeAngle(
         object.rotation.y + normalizeAngle(object.userData.targetYaw - object.rotation.y) * blend
       );
+    }
+    if (object.userData.targetQuaternion instanceof THREE.Quaternion) {
+      object.quaternion.slerp(object.userData.targetQuaternion, blend);
     }
     if (typeof object.userData.targetPitch === "number") {
       object.rotation.x += (object.userData.targetPitch - object.rotation.x) * blend;
@@ -1758,14 +1782,46 @@ function syncProjectileMeshes(
     }
 
     queueObjectTransform(object, projectile.x, projectile.y, projectile.z, projectile.yaw ?? 0);
-    object.userData.targetPitch = -(projectile.pitch ?? 0);
-    object.userData.targetRoll = projectile.roll ?? 0;
+    queueForwardOrientation(object, projectile.yaw ?? 0, projectile.pitch ?? 0, projectile.roll ?? 0);
+    delete object.userData.targetYaw;
+    delete object.userData.targetPitch;
+    delete object.userData.targetRoll;
   }
 
   for (const [projectileId, object] of cache.entries()) {
     if (!liveIds.has(projectileId)) {
       layer.remove(object);
       cache.delete(projectileId);
+    }
+  }
+}
+
+function syncFragmentMeshes(
+  layer: THREE.Group,
+  cache: Map<string, THREE.Object3D>,
+  fragments: SnapshotFragmentState[]
+): void {
+  const liveIds = new Set(fragments.map((fragment) => fragment.id));
+
+  for (const fragment of fragments) {
+    let object = cache.get(fragment.id);
+    if (!object) {
+      object = createFragmentMarker(fragment);
+      cache.set(fragment.id, object);
+      layer.add(object);
+    }
+
+    queueObjectTransform(object, fragment.x, fragment.y, fragment.z, fragment.yaw ?? 0);
+    queueForwardOrientation(object, fragment.yaw ?? 0, fragment.pitch ?? 0, fragment.roll ?? 0);
+    delete object.userData.targetYaw;
+    delete object.userData.targetPitch;
+    delete object.userData.targetRoll;
+  }
+
+  for (const [fragmentId, object] of cache.entries()) {
+    if (!liveIds.has(fragmentId)) {
+      layer.remove(object);
+      cache.delete(fragmentId);
     }
   }
 }
@@ -1780,11 +1836,13 @@ function createProjectileMarker(projectile: SnapshotProjectileState): THREE.Obje
   return createExactProjectileMarker(shapeAssetUrl, projectile);
 }
 
+function createFragmentMarker(fragment: SnapshotFragmentState): THREE.Object3D {
+  return createExactFragmentMarker(fragment.shapeAssetUrl ?? LIVE_ASSET_URLS.sliverSmall, fragment);
+}
+
 function createExactProjectileMarker(shapeAssetUrl: string, projectile: SnapshotProjectileState): THREE.Object3D {
   const fallback = createFallbackProjectileMarker(projectile.kind);
   const root = new THREE.Group();
-  root.userData.baseYawOffset = BSP_FORWARD_YAW_OFFSET;
-  root.rotation.order = "YXZ";
   root.add(fallback);
 
   const resolved = resolvedRenderableCache.get(shapeAssetUrl);
@@ -1798,6 +1856,31 @@ function createExactProjectileMarker(shapeAssetUrl: string, projectile: Snapshot
     .then((renderable) => {
       root.clear();
       root.add(buildRenderableGroup(renderable, projectile.kind, projectile.scale ?? 1));
+    })
+    .catch(() => {
+      root.clear();
+      root.add(fallback);
+    });
+
+  return root;
+}
+
+function createExactFragmentMarker(shapeAssetUrl: string, fragment: SnapshotFragmentState): THREE.Object3D {
+  const root = new THREE.Group();
+  const fallback = createFallbackFragmentMarker(fragment);
+  root.add(fallback);
+
+  const resolved = resolvedRenderableCache.get(shapeAssetUrl);
+  if (resolved) {
+    root.clear();
+    root.add(buildFragmentRenderableGroup(resolved, fragment));
+    return root;
+  }
+
+  void loadBspRenderable(shapeAssetUrl)
+    .then((renderable) => {
+      root.clear();
+      root.add(buildFragmentRenderableGroup(renderable, fragment));
     })
     .catch(() => {
       root.clear();
@@ -1826,6 +1909,27 @@ function buildRenderableGroup(
     });
     const mesh = new THREE.Mesh(part.geometry, material);
     mesh.scale.setScalar(scale);
+    group.add(mesh);
+  }
+
+  return group;
+}
+
+function buildFragmentRenderableGroup(renderable: BspRenderableData, fragment: SnapshotFragmentState): THREE.Group {
+  const group = new THREE.Group();
+  const color = fragment.color ?? "#fffb00";
+
+  for (const part of renderable.groups) {
+    const resolved = part.baseToken ? color : (part.baseColor ?? color);
+    const material = new THREE.MeshStandardMaterial({
+      color: resolved,
+      emissive: fragment.accentColor ?? resolved,
+      emissiveIntensity: 0.24,
+      metalness: 0.05,
+      roughness: 0.52
+    });
+    const mesh = new THREE.Mesh(part.geometry, material);
+    mesh.scale.setScalar(fragment.scale ?? 1);
     group.add(mesh);
   }
 
@@ -1873,6 +1977,19 @@ function createFallbackProjectileMarker(kind: SnapshotProjectileState["kind"]): 
       color: kind === "missile" ? "#ff9b67" : "#79ffad",
       emissive: kind === "missile" ? "#ff6a36" : "#3acc72",
       emissiveIntensity: 0.4
+    })
+  );
+}
+
+function createFallbackFragmentMarker(fragment: SnapshotFragmentState): THREE.Object3D {
+  return new THREE.Mesh(
+    new THREE.BoxGeometry(0.18, 0.04, 0.12),
+    new THREE.MeshStandardMaterial({
+      color: fragment.color ?? "#fffb00",
+      emissive: fragment.accentColor ?? fragment.color ?? "#fffb00",
+      emissiveIntensity: 0.18,
+      metalness: 0.05,
+      roughness: 0.48
     })
   );
 }
