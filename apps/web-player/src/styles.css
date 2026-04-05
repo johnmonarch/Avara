@@ -274,11 +274,7 @@ a {
 
 .reticle {
   position: absolute;
-  inset: 50% auto auto 50%;
-  width: 120px;
-  height: 48px;
-  margin-left: -60px;
-  margin-top: -24px;
+  inset: 0;
   pointer-events: none;
 }
 
@@ -292,9 +288,9 @@ a {
 
 .reticle-bracket {
   position: absolute;
-  top: 8px;
-  width: 24px;
-  height: 32px;
+  width: 18px;
+  height: 30px;
+  transform: translate(-50%, -50%);
   pointer-events: none;
 }
 
@@ -310,25 +306,29 @@ a {
 
 .reticle-bracket::before {
   top: 0;
-  width: 18px;
-  height: 3px;
+  width: 13px;
+  height: 2px;
 }
 
 .reticle-bracket::after {
   bottom: 0;
-  width: 18px;
-  height: 3px;
+  width: 13px;
+  height: 2px;
 }
 
-.reticle-bracket-left {
-  left: 4px;
+.reticle-bracket[data-state="neutral"] {
+  color: #68d87f;
+}
+
+.reticle-bracket[data-state="locked"] {
+  color: #ff4738;
 }
 
 .reticle-bracket-left span {
   top: 0;
   left: 0;
-  width: 3px;
-  height: 32px;
+  width: 2px;
+  height: 30px;
 }
 
 .reticle-bracket-left::before,
@@ -336,15 +336,11 @@ a {
   left: 0;
 }
 
-.reticle-bracket-right {
-  right: 4px;
-}
-
 .reticle-bracket-right span {
   top: 0;
   right: 0;
-  width: 3px;
-  height: 32px;
+  width: 2px;
+  height: 30px;
 }
 
 .reticle-bracket-right::before,

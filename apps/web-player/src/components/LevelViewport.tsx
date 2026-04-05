@@ -88,6 +88,9 @@ const GRENADE_MOUNT_OFFSET = { x: 0, y: -0.2, z: 0.95 };
 const SMART_MISSILE_TARGET_RANGE = 160;
 const BSP_FORWARD_YAW_OFFSET = -Math.PI / 2;
 const FIRST_PERSON_HULL_OFFSET = { x: 0, y: -0.28, z: 0.54 };
+const PLAYER_PLASMA_RANGE = 150;
+const PLAYER_PLASMA_FALLBACK_RANGE = PLAYER_PLASMA_RANGE / 4;
+const RETICLE_DISTANCE_OFFSET = 0.1;
 
 export default function LevelViewport({
   scene,
@@ -106,6 +109,9 @@ export default function LevelViewport({
 }: LevelViewportProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const pointerLockTargetRef = useRef<HTMLCanvasElement | null>(null);
+  const reticleRootRef = useRef<HTMLDivElement | null>(null);
+  const leftReticleRef = useRef<HTMLSpanElement | null>(null);
+  const rightReticleRef = useRef<HTMLSpanElement | null>(null);
   const [pointerLocked, setPointerLocked] = useState(false);
   const [renderStats, setRenderStats] = useState({
     nodes: 0,
@@ -502,6 +508,18 @@ export default function LevelViewport({
 
       renderer.render(threeScene, camera);
 
+      updateCannonReticleOverlay(
+        reticleRootRef.current,
+        leftReticleRef.current,
+        rightReticleRef.current,
+        mount,
+        camera,
+        sceneRoot,
+        playerLayer,
+        liveLocalPlayer,
+        localPlayerIdRef.current
+      );
+
       framesSinceSample += 1;
       if (now - sampleStart >= 500) {
         const nextFps = Math.round((framesSinceSample * 1000) / (now - sampleStart));
@@ -600,9 +618,9 @@ export default function LevelViewport({
       ) : null}
 
       {pointerLocked ? (
-        <div className={`reticle reticle-${reticleState}`} aria-hidden="true">
-          <span className="reticle-bracket reticle-bracket-left"><span /></span>
-          <span className="reticle-bracket reticle-bracket-right"><span /></span>
+        <div className={`reticle reticle-${reticleState}`} aria-hidden="true" ref={reticleRootRef}>
+          <span className="reticle-bracket reticle-bracket-left" ref={leftReticleRef}><span /></span>
+          <span className="reticle-bracket reticle-bracket-right" ref={rightReticleRef}><span /></span>
         </div>
       ) : null}
 
@@ -1107,9 +1125,96 @@ function smoothDynamicObjects(
   }
 }
 
+function updateCannonReticleOverlay(
+  root: HTMLDivElement | null,
+  leftBracket: HTMLSpanElement | null,
+  rightBracket: HTMLSpanElement | null,
+  mount: HTMLDivElement,
+  camera: THREE.PerspectiveCamera,
+  sceneRoot: THREE.Group,
+  playerLayer: THREE.Group,
+  player: SnapshotPlayerState | null,
+  localPlayerId?: string
+): void {
+  if (!root || !leftBracket || !rightBracket) {
+    return;
+  }
+
+  if (!player?.alive || player.weaponLoad !== "cannon") {
+    root.style.display = "none";
+    return;
+  }
+
+  root.style.display = "block";
+
+  const width = mount.clientWidth;
+  const height = mount.clientHeight;
+  const forward = new THREE.Vector3();
+  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion).normalize();
+  const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
+  camera.getWorldDirection(forward).normalize();
+
+  const raycaster = new THREE.Raycaster();
+  raycaster.far = PLAYER_PLASMA_RANGE;
+
+  const updateBracket = (element: HTMLSpanElement, side: "left" | "right") => {
+    const origin = camera.position.clone()
+      .addScaledVector(right, side === "left" ? -GUN_MOUNT_OFFSET_X : GUN_MOUNT_OFFSET_X)
+      .addScaledVector(up, GUN_MOUNT_OFFSET_Y)
+      .addScaledVector(forward, GUN_MOUNT_OFFSET_Z);
+
+    raycaster.set(origin, forward);
+    const intersections = raycaster.intersectObjects([sceneRoot, playerLayer], true);
+    let distance = PLAYER_PLASMA_FALLBACK_RANGE;
+    let locked = false;
+
+    for (const hit of intersections) {
+      const targetPlayerId = findTaggedPlayerId(hit.object);
+      if (targetPlayerId && targetPlayerId !== localPlayerId) {
+        distance = Math.min(PLAYER_PLASMA_RANGE, hit.distance + RETICLE_DISTANCE_OFFSET);
+        locked = true;
+        break;
+      }
+
+      if (!targetPlayerId) {
+        distance = Math.min(PLAYER_PLASMA_RANGE, hit.distance + RETICLE_DISTANCE_OFFSET);
+        break;
+      }
+    }
+
+    const targetPoint = origin.clone().addScaledVector(forward, distance);
+    const projected = targetPoint.project(camera);
+    if (projected.z < -1 || projected.z > 1) {
+      element.style.opacity = "0";
+      return;
+    }
+
+    element.style.opacity = "1";
+    element.style.left = `${(projected.x * 0.5 + 0.5) * width}px`;
+    element.style.top = `${(-projected.y * 0.5 + 0.5) * height}px`;
+    element.dataset.state = locked ? "locked" : "neutral";
+  };
+
+  updateBracket(leftBracket, "left");
+  updateBracket(rightBracket, "right");
+}
+
+function findTaggedPlayerId(object: THREE.Object3D | null): string | undefined {
+  let current: THREE.Object3D | null = object;
+  while (current) {
+    if (typeof current.userData.playerId === "string") {
+      return current.userData.playerId;
+    }
+    current = current.parent;
+  }
+  return undefined;
+}
+
 function createPlayerMarker(player: SnapshotPlayerState, isLocal: boolean): THREE.Object3D {
   if (isWalkerAssemblyPlayer(player)) {
-    return createWalkerAssemblyMarker(player, isLocal);
+    const walker = createWalkerAssemblyMarker(player, isLocal);
+    walker.userData.playerId = player.id;
+    return walker;
   }
 
   const root = createDynamicAssetMarker({
@@ -1125,6 +1230,7 @@ function createPlayerMarker(player: SnapshotPlayerState, isLocal: boolean): THRE
   });
   root.userData.baseYawOffset = BSP_FORWARD_YAW_OFFSET;
   root.rotation.order = "YXZ";
+  root.userData.playerId = player.id;
   return root;
 }
 
