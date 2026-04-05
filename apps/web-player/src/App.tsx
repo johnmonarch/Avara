@@ -1404,9 +1404,9 @@ function getBindingMap(controlPreset: PlayerSettings["controlPreset"]): BindingM
     moveForwardNegative: ["KeyS", "ArrowDown"],
     turnLeft: ["KeyA", "ArrowLeft"],
     turnRight: ["KeyD", "ArrowRight"],
-    primaryFireKeys: ["Space"],
+    primaryFireKeys: [],
     boostKeys: ["ShiftLeft", "ShiftRight"],
-    crouchJumpKeys: [],
+    crouchJumpKeys: ["Space"],
     missileKeys: ["KeyQ", "KeyF"],
     grenadeKeys: ["KeyE", "KeyG"],
     scoutViewKeys: ["Tab"]

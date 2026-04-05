@@ -34,10 +34,11 @@ export const CONTROL_PRESET_BINDINGS: Record<ControlPreset["id"], ControlBinding
     { action: "Drive", keys: "W / S or Up / Down" },
     { action: "Rotate legs", keys: "A / D or Left / Right" },
     { action: "Aim turret", keys: "Mouse" },
-    { action: "Primary fire", keys: "Left click or Space" },
+    { action: "Primary fire", keys: "Left click" },
     { action: "Load missile", keys: "Q or F" },
     { action: "Load grenade", keys: "E or G" },
     { action: "Booster", keys: "Left Shift" },
+    { action: "Crouch / jump", keys: "Space" },
     { action: "Scout camera", keys: "Tab" },
     { action: "Context help", keys: "On-screen HUD" }
   ]

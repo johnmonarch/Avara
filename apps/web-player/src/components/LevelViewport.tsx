@@ -508,7 +508,7 @@ export default function LevelViewport({
             <p>
               {playerSettings.controlPreset === "classic"
                 ? "Drive with W/S, rotate the chassis with A/D, aim with the mouse, fire with left click, and keep crouch or jump on Space."
-                : "Drive with W/S or arrows, rotate the chassis with A/D or arrows, fire with click or Space, and use F/G aliases for weapon loads."}
+                : "Drive with W/S or arrows, rotate the chassis with A/D or arrows, fire with left click, hold Space to crouch, and release it to jump."}
             </p>
           </div>
         </div>
@@ -1074,20 +1074,23 @@ function createWalkerAssemblyMarker(player: SnapshotPlayerState, isLocal: boolea
   root.rotation.order = "YXZ";
 
   const palette = createWalkerPalette(player, isLocal);
+  const rig = new THREE.Group();
+  rig.name = "walker-rig";
+  root.add(rig);
 
   const hullPivot = new THREE.Group();
   hullPivot.name = "walker-hull";
-  root.add(hullPivot);
+  rig.add(hullPivot);
   attachBspRenderable(hullPivot, player.shapeAssetUrl ?? LIVE_ASSET_URLS.hector, palette);
 
   const leftUpper = new THREE.Group();
   leftUpper.name = "walker-left-upper";
-  root.add(leftUpper);
+  rig.add(leftUpper);
   attachBspRenderable(leftUpper, LIVE_ASSET_URLS.hectorLegHigh, palette);
 
   const rightUpper = new THREE.Group();
   rightUpper.name = "walker-right-upper";
-  root.add(rightUpper);
+  rig.add(rightUpper);
   attachBspRenderable(rightUpper, LIVE_ASSET_URLS.hectorLegHigh, palette, {
     preRotateY: Math.PI
   });
@@ -1168,6 +1171,15 @@ function updateWalkerAssemblyPose(root: THREE.Group, player: SnapshotPlayerState
   if (rightLower) {
     rightLower.position.set(0, -HECTOR_LEG_HIGH_LENGTH, 0);
     rightLower.rotation.set(-rightPose.lowerAngle, 0, 0);
+  }
+
+  const rig = root.getObjectByName("walker-rig") as THREE.Group | undefined;
+  if (rig) {
+    rig.position.y = 0;
+    root.updateMatrixWorld(true);
+    const bounds = new THREE.Box3().setFromObject(rig);
+    const localMin = root.worldToLocal(bounds.min.clone()).y;
+    rig.position.y = Number.isFinite(localMin) ? -localMin : 0;
   }
 }
 
