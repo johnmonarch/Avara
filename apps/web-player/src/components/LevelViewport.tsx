@@ -465,11 +465,18 @@ export default function LevelViewport({
           focus.z
         );
       } else if (liveLocalPlayer?.alive) {
-        const cameraOrigin = new THREE.Vector3(
-          focus.x,
-          focus.y + getPlayerViewTargetHeight(liveLocalPlayer) + VIEW_OFFSET_Y,
-          focus.z
-        );
+        const hullObject = localPlayerObject?.getObjectByName("walker-hull") ?? null;
+        const cameraOrigin = hullObject
+          ? hullObject.getWorldPosition(new THREE.Vector3()).add(
+              new THREE.Vector3(0, VIEW_OFFSET_Y, 0).applyQuaternion(
+                hullObject.getWorldQuaternion(new THREE.Quaternion())
+              )
+            )
+          : new THREE.Vector3(
+              focus.x,
+              focus.y + getPlayerViewTargetHeight(liveLocalPlayer) + VIEW_OFFSET_Y,
+              focus.z
+            );
         const viewDirection = directionFromYawPitch(heading.current.yaw, heading.current.pitch);
         camera.position.copy(cameraOrigin);
         camera.lookAt(
@@ -1300,6 +1307,7 @@ function createFirstPersonCockpitRig(): THREE.Group {
   const root = new THREE.Group();
   root.name = "first-person-cockpit";
   root.visible = false;
+  root.rotation.y = BSP_FORWARD_YAW_OFFSET;
 
   const hull = new THREE.Group();
   hull.name = "first-person-hull";
