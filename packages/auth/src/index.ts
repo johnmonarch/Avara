@@ -5,7 +5,8 @@ export const DEFAULT_PLAYER_SETTINGS: PlayerSettings = {
   sensitivity: 0.75,
   invertY: false,
   graphicsQuality: "balanced",
-  showPerformanceHud: false
+  showPerformanceHud: false,
+  hullType: "light"
 };
 
 export function createGuestIdentity(displayName?: string): Identity {

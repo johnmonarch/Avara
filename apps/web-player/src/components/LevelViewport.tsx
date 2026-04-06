@@ -92,7 +92,7 @@ const SMART_MISSILE_MOUNT_OFFSET = { x: 0, y: 0.45, z: 0.6 };
 const GRENADE_MOUNT_OFFSET = { x: 0, y: -0.2, z: 0.95 };
 const SMART_MISSILE_TARGET_RANGE = 160;
 const BSP_FORWARD_YAW_OFFSET = -Math.PI / 2;
-const FIRST_PERSON_HULL_OFFSET = { x: 0, y: -0.22, z: -0.68 };
+const FIRST_PERSON_HULL_OFFSET = { x: 0.14, y: -0.08, z: -0.98 };
 const FIRST_PERSON_SMART_MISSILE_MOUNT_OFFSET = { x: 0, y: 0.45, z: -0.6 };
 const FIRST_PERSON_GRENADE_MOUNT_OFFSET = { x: 0, y: -0.2, z: -0.95 };
 const PLAYER_PLASMA_RANGE = 150;
@@ -502,18 +502,11 @@ export default function LevelViewport({
           focus.z
         );
       } else if (liveLocalPlayer?.alive) {
-        const hullObject = localPlayerObject?.getObjectByName("walker-hull") ?? null;
-        const cameraOrigin = hullObject
-          ? hullObject.getWorldPosition(new THREE.Vector3()).add(
-              new THREE.Vector3(0, VIEW_OFFSET_Y, 0).applyQuaternion(
-                hullObject.getWorldQuaternion(new THREE.Quaternion())
-              )
-            )
-          : new THREE.Vector3(
-              focus.x,
-              focus.y + getPlayerViewTargetHeight(liveLocalPlayer) + VIEW_OFFSET_Y,
-              focus.z
-            );
+        const cameraOrigin = new THREE.Vector3(
+          focus.x,
+          focus.y + getPlayerCameraOriginHeight(liveLocalPlayer),
+          focus.z
+        );
         const viewDirection = directionFromYawPitch(heading.current.yaw, heading.current.pitch);
         camera.position.copy(cameraOrigin);
         camera.lookAt(
@@ -692,6 +685,11 @@ export default function LevelViewport({
               <span>Load: {localPlayer.weaponLoad}</span>
               <span>Missiles {localPlayer.missileAmmo}</span>
               <span>Grenades {localPlayer.grenadeAmmo}</span>
+            </div>
+            <div className="ammo-strip">
+              <span>Cannon L {Math.round(((localPlayer.gunEnergyLeft ?? 0) / Math.max(localPlayer.fullGunEnergy ?? 0.8, 0.0001)) * 100)}%</span>
+              <span>Cannon R {Math.round(((localPlayer.gunEnergyRight ?? 0) / Math.max(localPlayer.fullGunEnergy ?? 0.8, 0.0001)) * 100)}%</span>
+              <span>Hull {playerSettings.hullType}</span>
             </div>
             <div className="hud-row">
               <span>Leg direction</span>
@@ -1467,7 +1465,7 @@ function createFirstPersonCockpitRig(): THREE.Group {
     marker3: "#161616",
     fallback: "#7a5c25"
   };
-  syncBspRenderable(hull, LIVE_ASSET_URLS.hector, hullPalette);
+  syncBspRenderable(hull, LIVE_ASSET_URLS.hectorHead, hullPalette);
 
   const loadedMissile = new THREE.Group();
   loadedMissile.name = "first-person-loaded-missile";
@@ -1512,7 +1510,7 @@ function updateFirstPersonCockpitRig(
   };
   const hullVisual = root.getObjectByName("first-person-hull");
   if (hullVisual instanceof THREE.Group) {
-    syncBspRenderable(hullVisual, player.shapeAssetUrl ?? LIVE_ASSET_URLS.hector, hullPalette);
+    syncBspRenderable(hullVisual, LIVE_ASSET_URLS.hectorHead, hullPalette);
   }
 
   const hullAnchor = root.getObjectByName("first-person-hull-anchor");
@@ -1597,10 +1595,26 @@ function buildPaletteRenderableGroup(
 }
 
 function getPlayerViewTargetHeight(player: SnapshotPlayerState): number {
-  return Math.max(1.85, (player.stance ?? HECTOR_DEFAULT_STANCE) + HECTOR_VIEWPORT_HEIGHT);
+  return Math.max(
+    1.6,
+    (player.stance ?? HECTOR_DEFAULT_STANCE) - (player.crouch ?? 0) + (player.rideHeight ?? HECTOR_DEFAULT_RIDE_HEIGHT)
+  );
+}
+
+function getPlayerCameraOriginHeight(player: SnapshotPlayerState): number {
+  return Math.max(
+    1.1,
+    (player.stance ?? HECTOR_DEFAULT_STANCE) - (player.crouch ?? 0) + (player.rideHeight ?? HECTOR_DEFAULT_RIDE_HEIGHT) + VIEW_OFFSET_Y
+  );
 }
 
 function solveWalkerLegPose(headHeight: number, leg: SnapshotWalkerLegState): { upperAngle: number; lowerAngle: number } {
+  if (typeof leg.highAngle === "number" && typeof leg.lowAngle === "number") {
+    return {
+      upperAngle: leg.highAngle,
+      lowerAngle: leg.lowAngle
+    };
+  }
   const extendDeltaX = -leg.x;
   const extendDeltaY = headHeight - leg.y;
   const extendLength = Math.min(

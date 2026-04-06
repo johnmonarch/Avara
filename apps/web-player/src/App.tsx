@@ -49,8 +49,31 @@ const defaultPlayerSettings: PlayerSettings = {
   sensitivity: 0.75,
   invertY: false,
   graphicsQuality: "balanced",
-  showPerformanceHud: false
+  showPerformanceHud: false,
+  hullType: "light"
 };
+
+const HULL_OPTIONS: Array<{
+  id: PlayerSettings["hullType"];
+  label: string;
+  description: string;
+}> = [
+  {
+    id: "light",
+    label: "Light hull",
+    description: "Fastest chassis with the light BSP shell, lower reserves, and the leanest weapon loadout."
+  },
+  {
+    id: "medium",
+    label: "Medium hull",
+    description: "Balanced armor and reserves with the medium shell, more missiles and grenades, and a slightly taller ride."
+  },
+  {
+    id: "heavy",
+    label: "Heavy hull",
+    description: "Heaviest shell with the biggest stores and tougher shot profile, trading acceleration for payload and shielding."
+  }
+];
 
 interface StoredReconnectState {
   roomId: string;
@@ -640,7 +663,7 @@ export function App() {
         writeReconnectState(joinedRoom);
         syncInviteQuery(joinedRoom.inviteCode);
 
-        const joined = await joinPrototypeRoom(joinedRoom, identity);
+        const joined = await joinPrototypeRoom(joinedRoom, identity, playerSettingsRef.current.hullType);
         if (cancelled) {
           return;
         }
@@ -1142,6 +1165,28 @@ export function App() {
               {GRAPHICS_QUALITY_OPTIONS.find((quality) => quality.id === settingsDraft.graphicsQuality)?.description}
             </p>
 
+            <label className="field">
+              <span>Hull class</span>
+              <select
+                value={settingsDraft.hullType}
+                onChange={(event) =>
+                  setSettingsDraft((current) => ({
+                    ...current,
+                    hullType: event.target.value as PlayerSettings["hullType"]
+                  }))
+                }
+              >
+                {HULL_OPTIONS.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="muted preset-copy">
+              {HULL_OPTIONS.find((option) => option.id === settingsDraft.hullType)?.description}
+            </p>
+
             <label className="toggle-field">
               <input
                 type="checkbox"
@@ -1468,7 +1513,8 @@ function playerSettingsEqual(left: PlayerSettings, right: PlayerSettings): boole
     left.sensitivity === right.sensitivity &&
     left.invertY === right.invertY &&
     left.graphicsQuality === right.graphicsQuality &&
-    left.showPerformanceHud === right.showPerformanceHud
+    left.showPerformanceHud === right.showPerformanceHud &&
+    left.hullType === right.hullType
   );
 }
 

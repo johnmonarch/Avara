@@ -42,6 +42,7 @@ export interface ControlPreset {
 }
 
 export type GraphicsQuality = "performance" | "balanced" | "quality";
+export type PlayerHullType = "light" | "medium" | "heavy";
 
 export interface PlayerSettings {
   controlPreset: ControlPreset["id"];
@@ -49,6 +50,7 @@ export interface PlayerSettings {
   invertY: boolean;
   graphicsQuality: GraphicsQuality;
   showPerformanceHud: boolean;
+  hullType: PlayerHullType;
 }
 
 export interface RoomPlayer {

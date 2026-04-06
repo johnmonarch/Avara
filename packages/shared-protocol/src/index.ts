@@ -68,6 +68,8 @@ export interface SnapshotPlayerState {
   shields?: number;
   gunEnergyLeft?: number;
   gunEnergyRight?: number;
+  fullGunEnergy?: number;
+  activeGunEnergy?: number;
   respawnSeconds: number;
   shapeId?: number;
   shapeKey?: string;
@@ -89,6 +91,8 @@ export interface SnapshotWalkerLegState {
   whereY: number;
   whereZ: number;
   touching: boolean;
+  highAngle?: number;
+  lowAngle?: number;
 }
 
 export interface SnapshotScoutState {

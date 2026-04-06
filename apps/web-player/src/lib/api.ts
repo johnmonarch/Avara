@@ -8,6 +8,7 @@ import type {
   LevelScene,
   LevelSummary,
   PlayerSettings,
+  PlayerHullType,
   RoomDetail,
   RoomSummary,
   Visibility
@@ -196,13 +197,15 @@ export async function bootstrapPrototypeRoom(room: Pick<RoomSummary, "id" | "lev
 
 export async function joinPrototypeRoom(
   room: Pick<RoomSummary, "id" | "gameServerUrl">,
-  identity: Identity
+  identity: Identity,
+  hullType: PlayerHullType
 ): Promise<{ playerId: string; snapshot: SnapshotPacket }> {
   return gameRequest<{ playerId: string; snapshot: SnapshotPacket }>(room.gameServerUrl, `/rooms/${encodeURIComponent(room.id)}/join`, {
     method: "POST",
     body: JSON.stringify({
       playerId: identity.id,
-      displayName: identity.displayName
+      displayName: identity.displayName,
+      hullType
     })
   });
 }

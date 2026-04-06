@@ -1536,7 +1536,11 @@ function normalizePlayerSettings(value: unknown, base: PlayerSettings = DEFAULT_
         ? input.graphicsQuality
         : base.graphicsQuality,
     showPerformanceHud:
-      typeof input.showPerformanceHud === "boolean" ? input.showPerformanceHud : base.showPerformanceHud
+      typeof input.showPerformanceHud === "boolean" ? input.showPerformanceHud : base.showPerformanceHud,
+    hullType:
+      input.hullType === "light" || input.hullType === "medium" || input.hullType === "heavy"
+        ? input.hullType
+        : base.hullType
   };
 }
 

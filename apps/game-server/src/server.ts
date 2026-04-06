@@ -23,7 +23,7 @@ import type {
   SnapshotProjectileState,
   WeaponLoad
 } from "@avara/shared-protocol";
-import type { HullSimulationSettings, LevelScene, LevelSimulationSettings, SceneNode } from "@avara/shared-types";
+import type { HullSimulationSettings, LevelScene, LevelSimulationSettings, PlayerHullType, SceneNode } from "@avara/shared-types";
 import { PROTOCOL_VERSION } from "@avara/shared-protocol";
 import { log } from "@avara/telemetry";
 
@@ -86,6 +86,9 @@ const HECTOR_BEST_SPEED_HEIGHT = 1.7;
 const HECTOR_DEFAULT_STANCE = HECTOR_BEST_SPEED_HEIGHT;
 const HECTOR_GRAVITY = 0.12;
 const HECTOR_LEG_SPACE_ABS = 0.6;
+const HECTOR_LEG_HIGH_LENGTH = 0.905;
+const HECTOR_LEG_LOW_LENGTH = 1.15;
+const HECTOR_MAX_LEG_LENGTH = 2;
 const HECTOR_LEG_SCAN_HEIGHT = 0.2;
 const HECTOR_CONTACT_HEIGHT = 0.1;
 const PLAYER_COLLISION_TOP_PADDING = 0.45;
@@ -140,6 +143,51 @@ const DEFAULT_HECTOR_HULL = {
   shotChargeRatio: 1.0500038147554742,
   accelerationRatio: 1,
   jumpPowerRatio: 1
+};
+const MEDIUM_HECTOR_HULL = {
+  resourceId: 129,
+  shapeId: 216,
+  shapeKey: "bspAvaraMedium",
+  shapeAssetUrl: `${ROOT_BSP_CONTENT_PREFIX}/216.json`,
+  rideHeight: 0.3500114442664225,
+  maxMissiles: 4,
+  maxGrenades: 8,
+  maxBoosters: 4,
+  mass: 155,
+  energyRatio: 1.1000076295109484,
+  energyChargeRatio: 1.0249942778667887,
+  shieldsRatio: 1,
+  shieldsChargeRatio: 1,
+  minShotRatio: 1,
+  maxShotRatio: 1,
+  shotChargeRatio: 1,
+  accelerationRatio: 1.1000076295109484,
+  jumpPowerRatio: 1
+};
+const HEAVY_HECTOR_HULL = {
+  resourceId: 130,
+  shapeId: 217,
+  shapeKey: "bspAvaraHeavy",
+  shapeAssetUrl: `${ROOT_BSP_CONTENT_PREFIX}/217.json`,
+  rideHeight: 0.3500114442664225,
+  maxMissiles: 8,
+  maxGrenades: 12,
+  maxBoosters: 5,
+  mass: 170,
+  energyRatio: 1.1000076295109484,
+  energyChargeRatio: 1.0500038147554742,
+  shieldsRatio: 1.1000076295109484,
+  shieldsChargeRatio: 1,
+  minShotRatio: 1.1000076295109484,
+  maxShotRatio: 1,
+  shotChargeRatio: 1.0500038147554742,
+  accelerationRatio: 1,
+  jumpPowerRatio: 1.1000076295109484
+};
+const HULL_SETTINGS_BY_TYPE: Record<PlayerHullType, HullSimulationSettings> = {
+  light: DEFAULT_HECTOR_HULL,
+  medium: MEDIUM_HECTOR_HULL,
+  heavy: HEAVY_HECTOR_HULL
 };
 const BSP_PLASMA = {
   shapeId: 203,
@@ -349,6 +397,8 @@ interface WalkerLegState {
   whereY: number;
   whereZ: number;
   touching: boolean;
+  highAngle: number;
+  lowAngle: number;
 }
 
 interface PlayerState {
@@ -408,6 +458,8 @@ interface PlayerState {
   grenadeLimit: number;
   boosterLimit: number;
   rideHeight: number;
+  hullType: PlayerHullType;
+  hullResourceId: number;
   hullShapeId: number;
   hullShapeKey?: string;
   hullShapeAssetUrl?: string;
@@ -554,6 +606,7 @@ createServer(async (request, response) => {
       const body = await readJsonBody(request);
       const playerId = asString(body?.playerId) ?? `player_${crypto.randomUUID()}`;
       const displayName = asString(body?.displayName) ?? "Guest";
+      const requestedHullType = normalizeHullType(body?.hullType) ?? "light";
 
       let player = room.players.get(playerId);
       if (!player) {
@@ -561,7 +614,12 @@ createServer(async (request, response) => {
           return sendJson(response, 409, { error: "Room is full" });
         }
 
-        player = spawnFreshPlayer(room, playerId, displayName);
+        player = spawnFreshPlayer(room, playerId, displayName, {
+          kills: 0,
+          deaths: 0,
+          hullType: requestedHullType,
+          hullResourceId: getRoomHullSettings(room.settings, requestedHullType).resourceId
+        });
         room.players.set(playerId, player);
         addEvent(room, {
           event: "spawn",
@@ -752,7 +810,22 @@ async function createRoomState(roomId: string, scene: LevelScene, maxPlayers: nu
   };
 }
 
-function getRoomHullSettings(settings: LevelSimulationSettings): HullSimulationSettings {
+function getRoomHullSettings(
+  settings: LevelSimulationSettings,
+  hullType?: PlayerHullType | null,
+  resourceId?: number | null
+): HullSimulationSettings {
+  if (typeof resourceId === "number" && Number.isFinite(resourceId)) {
+    const resolved = Object.values(HULL_SETTINGS_BY_TYPE).find((hull) => hull.resourceId === resourceId);
+    if (resolved) {
+      return resolved;
+    }
+  }
+
+  if (hullType) {
+    return HULL_SETTINGS_BY_TYPE[hullType] ?? settings.defaultHull ?? DEFAULT_HECTOR_HULL;
+  }
+
   return settings.defaultHull ?? DEFAULT_HECTOR_HULL;
 }
 
@@ -771,6 +844,22 @@ function getHullShapeKey(shapeId: number): string | undefined {
 
 function getHullShapeAssetUrl(shapeId: number): string {
   return `${ROOT_BSP_CONTENT_PREFIX}/${shapeId}.json`;
+}
+
+function resourceIdToHullType(resourceId: number): PlayerHullType {
+  switch (resourceId) {
+    case 129:
+      return "medium";
+    case 130:
+      return "heavy";
+    case 128:
+    default:
+      return "light";
+  }
+}
+
+function normalizeHullType(value: unknown): PlayerHullType | null {
+  return value === "light" || value === "medium" || value === "heavy" ? value : null;
 }
 
 function getPlayerTotalMass(player: PlayerState): number {
@@ -1264,6 +1353,7 @@ function updateWalkerLegContacts(room: RoomState, player: PlayerState, fpsScale:
   player.targetHeight = 0;
 
   const elevation = Math.max(HECTOR_MIN_HEAD_HEIGHT, player.stance - player.crouch);
+  const headHeight = elevation;
   const legSpeeds = computeWalkerLegSpeeds(player);
   player.absAvgSpeed = Math.abs(legSpeeds[0]) + Math.abs(legSpeeds[1]);
 
@@ -1322,6 +1412,9 @@ function updateWalkerLegContacts(room: RoomState, player: PlayerState, fpsScale:
     leg.whereY = contactY;
     leg.whereZ = worldZ;
     leg.y -= player.y;
+    const solvedAngles = solveWalkerLegAngles(headHeight, leg);
+    leg.highAngle = solvedAngles.highAngle;
+    leg.lowAngle = solvedAngles.lowAngle;
 
     legPhase += Math.PI;
   }
@@ -1354,6 +1447,31 @@ function updateWalkerSupportFromFeet(room: RoomState, player: PlayerState): void
 function computeWalkerLegSpeeds(player: PlayerState): [number, number] {
   const temp = (HECTOR_LEG_SPACE_ABS * 18) * player.headChange;
   return [player.distance - temp, player.distance + temp];
+}
+
+function solveWalkerLegAngles(headHeight: number, leg: Pick<WalkerLegState, "x" | "y">): { highAngle: number; lowAngle: number } {
+  const extendDeltaX = -leg.x;
+  const extendDeltaY = headHeight - leg.y;
+  let extendLength = Math.hypot(extendDeltaX, extendDeltaY);
+  if (extendLength > HECTOR_MAX_LEG_LENGTH) {
+    extendLength = HECTOR_MAX_LEG_LENGTH;
+  }
+  if (extendLength < 0.000001) {
+    return { highAngle: 0, lowAngle: 0 };
+  }
+
+  const legConstant = (HECTOR_LEG_HIGH_LENGTH * HECTOR_LEG_HIGH_LENGTH) - (HECTOR_LEG_LOW_LENGTH * HECTOR_LEG_LOW_LENGTH);
+  const highPart = ((legConstant / extendLength) + extendLength) / 2;
+  const lowPart = extendLength - highPart;
+  const normalSquared = Math.max(0, (HECTOR_LEG_HIGH_LENGTH * HECTOR_LEG_HIGH_LENGTH) - (highPart * highPart));
+  const normalPart = Math.sqrt(normalSquared);
+  const baseAngle = Math.atan2(extendDeltaY, extendDeltaX);
+  const lowPivotAngle = Math.atan2(highPart, normalPart || 0.000001);
+
+  return {
+    highAngle: baseAngle + lowPivotAngle,
+    lowAngle: -(Math.atan2(lowPart, normalPart || 0.000001) + lowPivotAngle)
+  };
 }
 
 function sampleFloorHeight(room: RoomState, x: number, z: number, currentY: number): number {
@@ -1559,7 +1677,9 @@ function processRespawns(room: RoomState): void {
 
     const respawned = spawnFreshPlayer(room, player.id, player.displayName, {
       kills: player.kills,
-      deaths: player.deaths
+      deaths: player.deaths,
+      hullType: player.hullType,
+      hullResourceId: player.hullResourceId
     });
     room.players.set(player.id, respawned);
     addEvent(room, {
@@ -2653,6 +2773,8 @@ function toSnapshotPlayer(room: RoomState) {
     shields: player.shields,
     gunEnergyLeft: player.gunEnergyLeft,
     gunEnergyRight: player.gunEnergyRight,
+    fullGunEnergy: player.fullGunEnergy,
+    activeGunEnergy: player.activeGunEnergy,
     targetLocked: computePlayerTargetLock(room, player),
     respawnSeconds: player.alive ? 0 : Math.max(0, Math.ceil((player.respawnAtTick - room.tick) / tickRate)),
     scoutView: player.scoutView,
@@ -2668,7 +2790,9 @@ function toSnapshotPlayer(room: RoomState) {
         whereX: player.legs[0].whereX,
         whereY: player.legs[0].whereY,
         whereZ: player.legs[0].whereZ,
-        touching: player.legs[0].touching
+        touching: player.legs[0].touching,
+        highAngle: player.legs[0].highAngle,
+        lowAngle: player.legs[0].lowAngle
       },
       {
         x: player.legs[1].x,
@@ -2676,7 +2800,9 @@ function toSnapshotPlayer(room: RoomState) {
         whereX: player.legs[1].whereX,
         whereY: player.legs[1].whereY,
         whereZ: player.legs[1].whereZ,
-        touching: player.legs[1].touching
+        touching: player.legs[1].touching,
+        highAngle: player.legs[1].highAngle,
+        lowAngle: player.legs[1].lowAngle
       }
     ]
   });
@@ -2755,12 +2881,12 @@ function spawnFreshPlayer(
   room: RoomState,
   playerId: string,
   displayName: string,
-  carry?: Pick<PlayerState, "kills" | "deaths">
+  carry?: Pick<PlayerState, "kills" | "deaths" | "hullType" | "hullResourceId">
 ): PlayerState {
   const spawn = room.spawnPoints[room.nextSpawnIndex % room.spawnPoints.length];
   room.nextSpawnIndex += 1;
   const groundedY = sampleFloorHeight(room, spawn.x, spawn.z, spawn.y);
-  const hull = getRoomHullSettings(room.settings);
+  const hull = getRoomHullSettings(room.settings, carry?.hullType, carry?.hullResourceId);
   const missileLimit = Math.min(room.settings.maxStartMissiles, hull.maxMissiles);
   const grenadeLimit = Math.min(room.settings.maxStartGrenades, hull.maxGrenades);
   const boosterLimit = Math.min(room.settings.maxStartBoosts, hull.maxBoosters);
@@ -2827,6 +2953,8 @@ function spawnFreshPlayer(
     grenadeLimit,
     boosterLimit,
     rideHeight: hull.rideHeight,
+    hullType: carry?.hullType ?? resourceIdToHullType(hull.resourceId),
+    hullResourceId: hull.resourceId,
     hullShapeId,
     hullShapeKey: getHullShapeKey(hullShapeId),
     hullShapeAssetUrl: getHullShapeAssetUrl(hullShapeId),
@@ -2840,8 +2968,8 @@ function spawnFreshPlayer(
     legPhase: 0,
     speedLimit: 0,
     legs: [
-      { x: 0, y: 0, whereX: spawn.x, whereY: groundedY, whereZ: spawn.z, touching: true },
-      { x: 0, y: 0, whereX: spawn.x, whereY: groundedY, whereZ: spawn.z, touching: true }
+      { x: 0, y: 0, whereX: spawn.x, whereY: groundedY, whereZ: spawn.z, touching: true, highAngle: 0, lowAngle: 0 },
+      { x: 0, y: 0, whereX: spawn.x, whereY: groundedY, whereZ: spawn.z, touching: true, highAngle: 0, lowAngle: 0 }
     ],
     input: emptyInput()
   };
