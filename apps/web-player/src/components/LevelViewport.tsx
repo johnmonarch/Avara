@@ -406,7 +406,7 @@ export default function LevelViewport({
       const pitchDelta = event.movementY * pitchScale * pitchDirection;
       const verticalMotionActive = verticalMotionCheckRef.current?.() ?? false;
 
-      heading.current.yaw -= event.movementX * yawScale;
+      heading.current.yaw += event.movementX * yawScale;
       if (verticalMotionActive) {
         stanceAdjustRef.current?.(event.movementY * 0.002 * settingsRef.current.sensitivity * pitchDirection);
         return;
