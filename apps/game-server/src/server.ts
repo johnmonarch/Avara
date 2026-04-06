@@ -91,7 +91,7 @@ const HECTOR_LEG_LOW_LENGTH = 1.15;
 const HECTOR_MAX_LEG_LENGTH = 2;
 const HECTOR_LEG_SCAN_HEIGHT = 0.2;
 const HECTOR_CONTACT_HEIGHT = 0.1;
-const HECTOR_IDLE_MOTION_EPSILON = 0.0005;
+const HECTOR_IDLE_MOTION_EPSILON = 0.01;
 const PLAYER_COLLISION_TOP_PADDING = 0.45;
 const PLAYER_COLLISION_SAMPLE_PADDING = 0.12;
 const BOOST_LENGTH_CLASSIC_FRAMES = 16 * 5;
@@ -1441,6 +1441,9 @@ function stabilizeWalkerIdleLegs(
   cosHeading: number
 ): void {
   player.legPhase = 0;
+  player.absAvgSpeed = 0;
+  player.distance = 0;
+  player.headChange = 0;
 
   for (let index = 0; index < 2; index += 1) {
     const leg = player.legs[index];

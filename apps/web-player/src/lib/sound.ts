@@ -13,6 +13,7 @@ const DEFAULT_TELEPORT_SOUND_ID = 410;
 const DEFAULT_INCARNATE_SOUND_ID = 411;
 const DEFAULT_MISSILE_BLAST_SOUND_ID = 230;
 const DEFAULT_GRENADE_BLAST_SOUND_ID = 231;
+const DEFAULT_GROUND_STEP_SOUND_ID = 160;
 
 interface AvaraSoundscapeInput {
   scene: LevelScene | null;
@@ -73,6 +74,7 @@ class AvaraSoundRuntime {
 
     const localPlayer = input.snapshot.players.find((player) => player.id === input.localPlayerId) ?? null;
     this.processEvents(input.snapshot, input.localPlayerId);
+    this.processFootsteps(input.snapshot, localPlayer);
     this.processProjectiles(input.snapshot, localPlayer);
     this.processTransportHeuristic(input.snapshot, input.localPlayerId);
     this.previousSnapshot = input.snapshot;
@@ -175,6 +177,40 @@ class AvaraSoundRuntime {
           : this.scene?.settings.blastSoundDefaultUrl,
         spatialVolume(localPlayer, previousProjectile, 0.55)
       );
+    }
+  }
+
+  private processFootsteps(snapshot: SnapshotPacket, localPlayer: SnapshotPlayerState | null): void {
+    const previousPlayers = new Map((this.previousSnapshot?.players ?? []).map((player) => [player.id, player]));
+    const groundStepSoundId = this.scene?.settings.groundStepSoundId ?? DEFAULT_GROUND_STEP_SOUND_ID;
+    const groundStepSoundUrl = this.scene?.settings.groundStepSoundUrl;
+
+    for (const player of snapshot.players) {
+      if (!player.alive || !player.legs?.length) {
+        continue;
+      }
+
+      const previousPlayer = previousPlayers.get(player.id);
+      for (let index = 0; index < player.legs.length; index += 1) {
+        const leg = player.legs[index];
+        const previousLeg = previousPlayer?.legs?.[index];
+        if (!leg || !leg.touching) {
+          continue;
+        }
+
+        const newlyTouching = previousLeg ? !previousLeg.touching : false;
+        const landingDrop = Math.max(0, (previousLeg?.whereY ?? leg.whereY) - leg.whereY);
+        const impact = landingDrop + Math.hypot(player.vx ?? 0, player.vz ?? 0) + Math.abs(player.vy ?? 0) * 0.35;
+        if (!newlyTouching && impact < 0.12) {
+          continue;
+        }
+
+        this.playOneShot(
+          groundStepSoundId,
+          groundStepSoundUrl,
+          spatialVolume(localPlayer, { x: leg.whereX, y: leg.whereY, z: leg.whereZ }, clamp(0.12 + impact * 0.22, 0.08, 0.42))
+        );
+      }
     }
   }
 
@@ -336,8 +372,8 @@ function spatialVolume(listener: SnapshotPlayerState | null, source: Vector3Like
   }
 
   const distance = distanceBetween(listener, source);
-  const normalized = clamp(1 - distance / 120, 0, 1);
-  return base * normalized * normalized;
+  const normalized = 1 / (1 + ((distance / 18) ** 2));
+  return clamp(base * normalized, 0, 1);
 }
 
 function distanceBetween(left: Vector3Like, right: Vector3Like): number {

@@ -171,6 +171,8 @@ export interface LevelSimulationSettings {
   gravity: number;
   defaultTraction: number;
   defaultFriction: number;
+  groundStepSoundId: number;
+  groundStepSoundUrl?: string;
   grenadePower: number;
   missilePower: number;
   missileTurnRate: number;

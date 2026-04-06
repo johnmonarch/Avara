@@ -170,9 +170,11 @@ export async function parseLevelScene(levelsRoot: string, levelId: string): Prom
   });
   const hullSettings = await loadDefaultHullSettings(levelsRoot, resolved.packDir, context);
 
+  const groundStepSoundId = readIntegerSetting(context, "groundStepSound", 160);
   const incarnateSoundId = readIntegerSetting(context, "incarnateSound", 411);
   const blastSoundDefaultId = readIntegerSetting(context, "blastSoundDefault", 230);
-  const [incarnateSoundAsset, blastSoundDefaultAsset] = await Promise.all([
+  const [groundStepSoundAsset, incarnateSoundAsset, blastSoundDefaultAsset] = await Promise.all([
+    resolveSoundAsset(groundStepSoundId, resolved.packDir, levelsRoot),
     resolveSoundAsset(incarnateSoundId, resolved.packDir, levelsRoot),
     resolveSoundAsset(blastSoundDefaultId, resolved.packDir, levelsRoot)
   ]);
@@ -188,6 +190,8 @@ export async function parseLevelScene(levelsRoot: string, levelId: string): Prom
       gravity: readNumericSetting(context, "gravity", 1),
       defaultTraction: readNumericSetting(context, "defaultTraction", 0.4),
       defaultFriction: readNumericSetting(context, "defaultFriction", 0.15),
+      groundStepSoundId,
+      groundStepSoundUrl: groundStepSoundAsset?.assetUrl,
       grenadePower: readNumericSetting(context, "grenadePower", 2.25),
       missilePower: readNumericSetting(context, "missilePower", 1),
       missileTurnRate: readNumericSetting(context, "missileTurnRate", 0.025),

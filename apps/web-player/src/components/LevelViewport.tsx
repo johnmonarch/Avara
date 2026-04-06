@@ -91,10 +91,10 @@ const SMART_MISSILE_MOUNT_OFFSET = { x: 0, y: 0.45, z: 0.6 };
 const GRENADE_MOUNT_OFFSET = { x: 0, y: -0.2, z: 0.95 };
 const SMART_MISSILE_TARGET_RANGE = 160;
 const BSP_FORWARD_YAW_OFFSET = -Math.PI / 2;
-const FIRST_PERSON_LEFT_GUN_OFFSET = { x: -0.46, y: -0.34, z: -0.92 };
-const FIRST_PERSON_RIGHT_GUN_OFFSET = { x: 0.46, y: -0.34, z: -0.92 };
-const FIRST_PERSON_SMART_MISSILE_MOUNT_OFFSET = { x: 0, y: -0.02, z: -1.06 };
-const FIRST_PERSON_GRENADE_MOUNT_OFFSET = { x: 0, y: -0.14, z: -0.98 };
+const FIRST_PERSON_LEFT_GUN_OFFSET = { x: -0.7, y: -0.52, z: -0.78 };
+const FIRST_PERSON_RIGHT_GUN_OFFSET = { x: 0.7, y: -0.52, z: -0.78 };
+const FIRST_PERSON_SMART_MISSILE_MOUNT_OFFSET = { x: 0, y: -0.08, z: -0.96 };
+const FIRST_PERSON_GRENADE_MOUNT_OFFSET = { x: 0, y: -0.16, z: -0.9 };
 const PLAYER_PLASMA_RANGE = 150;
 const PLAYER_PLASMA_FALLBACK_RANGE = PLAYER_PLASMA_RANGE / 4;
 const RETICLE_DISTANCE_OFFSET = 0.1;
@@ -450,7 +450,7 @@ export default function LevelViewport({
       syncFragmentMeshes(fragmentLayer, fragmentMeshes, currentSnapshot?.fragments ?? []);
       syncScoutMeshes(scoutLayer, scoutMeshes, currentSnapshot?.scouts ?? [], localPlayerIdRef.current);
       syncPlayerMeshes(playerLayer, playerMeshes, currentSnapshot?.players ?? [], localPlayerIdRef.current);
-      smoothDynamicObjects(playerMeshes, frameDelta);
+      smoothDynamicObjects(playerMeshes, frameDelta, 1);
       smoothDynamicObjects(scoutMeshes, frameDelta);
       smoothDynamicObjects(projectileMeshes, frameDelta, 0.82);
       smoothDynamicObjects(fragmentMeshes, frameDelta, 0.82);
@@ -1049,6 +1049,7 @@ function syncPlayerMeshes(
     }
 
     object.visible = player.alive;
+    object.userData.transformResponsiveness = player.id === localPlayerId ? 1 : 0.9;
     queueObjectTransform(object, player.x, player.y, player.z, player.bodyYaw);
     updatePlayerMarker(object, player);
   }
@@ -1151,8 +1152,13 @@ function smoothDynamicObjects(
   frameDelta: number,
   responsiveness = 0.72
 ): void {
-  const blend = 1 - Math.pow(1 - responsiveness, Math.min(3, frameDelta * 60));
   for (const object of cache.values()) {
+    const objectResponsiveness = typeof object.userData.transformResponsiveness === "number"
+      ? object.userData.transformResponsiveness
+      : responsiveness;
+    const blend = objectResponsiveness >= 1
+      ? 1
+      : 1 - Math.pow(1 - objectResponsiveness, Math.min(3, frameDelta * 60));
     const targetX = object.userData.targetX;
     const targetY = object.userData.targetY;
     const targetZ = object.userData.targetZ;
@@ -1535,9 +1541,9 @@ function buildNativeUpperLegMatrix(highAngle: number, mirrored: boolean): Native
   nativeInitialRotateX(matrix, highAngle);
   if (mirrored) {
     nativePreFlipY(matrix);
-    nativeTranslateX(matrix, HECTOR_LEG_SPACE);
-  } else {
     nativeTranslateX(matrix, -HECTOR_LEG_SPACE);
+  } else {
+    nativeTranslateX(matrix, HECTOR_LEG_SPACE);
   }
   return matrix;
 }
@@ -1550,7 +1556,7 @@ function buildNativeLowerLegMatrix(highAngle: number, lowAngle: number, mirrored
   }
   nativeTranslateY(matrix, -HECTOR_LEG_HIGH_LENGTH);
   nativeRotateX(matrix, highAngle);
-  nativeTranslateX(matrix, mirrored ? HECTOR_LEG_SPACE : -HECTOR_LEG_SPACE);
+  nativeTranslateX(matrix, mirrored ? -HECTOR_LEG_SPACE : HECTOR_LEG_SPACE);
   return matrix;
 }
 
@@ -1572,7 +1578,7 @@ function createFirstPersonCockpitRig(): THREE.Group {
 
   const hullAnchor = new THREE.Group();
   hullAnchor.name = "first-person-hull-anchor";
-  hullAnchor.position.set(0, -0.02, 0.06);
+  hullAnchor.position.set(0, -0.1, -0.04);
   root.add(hullAnchor);
 
   const gunsRig = new THREE.Group();

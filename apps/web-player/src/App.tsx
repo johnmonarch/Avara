@@ -1444,8 +1444,7 @@ function buildCombatInput(
   const keyTurn =
     (isBindingActive(keys, bindings.turnRight) ? 1 : 0) +
     (isBindingActive(keys, bindings.turnLeft) ? -1 : 0);
-  const pointerLocked = typeof document !== "undefined" && Boolean(document.pointerLockElement);
-  const modernizedPointerSteer = settings.controlPreset === "modernized" && pointerLocked;
+  const modernizedPointerSteer = settings.controlPreset === "modernized";
   const carriedAimYaw = modernizedPointerSteer ? 0 : look.aimYaw;
   const payload = {
     moveForward,
