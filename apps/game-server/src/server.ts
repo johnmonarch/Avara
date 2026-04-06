@@ -1354,6 +1354,8 @@ function updateWalkerLegContacts(room: RoomState, player: PlayerState, fpsScale:
   const headHeight = elevation;
   const legSpeeds = computeWalkerLegSpeeds(player);
   player.absAvgSpeed = Math.abs(legSpeeds[0]) + Math.abs(legSpeeds[1]);
+  const sinHeading = Math.sin(player.bodyYaw);
+  const cosHeading = Math.cos(player.bodyYaw);
 
   if (
     player.absAvgSpeed < HECTOR_IDLE_MOTION_EPSILON
@@ -1370,8 +1372,6 @@ function updateWalkerLegContacts(room: RoomState, player: PlayerState, fpsScale:
   player.legPhase += fpsCoefficient2(phaseChange / 10, fpsScale);
 
   let legPhase = player.legPhase;
-  const sinHeading = Math.sin(player.bodyYaw);
-  const cosHeading = Math.cos(player.bodyYaw);
 
   for (let index = 0; index < 2; index += 1) {
     const leg = player.legs[index];
