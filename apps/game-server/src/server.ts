@@ -358,6 +358,7 @@ interface FragmentState {
 
 interface PlayerInputState {
   moveForward: number;
+  strafe: number;
   turnBody: number;
   aimYaw: number;
   aimPitch: number;
@@ -412,6 +413,7 @@ interface PlayerState {
   vz: number;
   leftMotor: number;
   rightMotor: number;
+  strafeMotor: number;
   bodyYaw: number;
   turretYaw: number;
   turretPitch: number;
@@ -692,6 +694,7 @@ createServer(async (request, response) => {
 
       const nextInput: PlayerInputState = {
         moveForward: clamp(asNumber(body?.moveForward) ?? 0, -1, 1),
+        strafe: clamp(asNumber(body?.strafe) ?? 0, -1, 1),
         turnBody: clamp(asNumber(body?.turnBody) ?? 0, -1, 1),
         aimYaw: clamp(asNumber(body?.aimYaw) ?? 0, -1.2, 1.2),
         aimPitch: clamp(asNumber(body?.aimPitch) ?? 0, -0.8, 0.5),
@@ -1145,53 +1148,42 @@ function simulateWalkerMotors(room: RoomState, player: PlayerState, fpsScale: nu
 
   player.leftMotor *= motorResponse.coeff1;
   player.rightMotor *= motorResponse.coeff1;
+  player.strafeMotor *= motorResponse.coeff1;
 
-  let motionFlags = 0;
-  if (player.input.moveForward > 0.5) {
-    motionFlags |= 1 + 2;
-  }
-  if (player.input.moveForward < -0.5) {
-    motionFlags |= 4 + 8;
-  }
-  if (player.input.turnBody < -0.5) {
-    motionFlags |= 2 + 4;
-  }
-  if (player.input.turnBody > 0.5) {
-    motionFlags |= 1 + 8;
-  }
+  const applyMotorCommand = (current: number, command: number): number => {
+    if (command > 0.0001) {
+      if (current <= 0) {
+        current += motorResponse.offset;
+      }
+      return current + (motorResponse.coeff2 * command);
+    }
+    if (command < -0.0001) {
+      if (current >= 0) {
+        current -= motorResponse.offset;
+      }
+      return current + (motorResponse.coeff2 * command);
+    }
+    return current;
+  };
 
-  if (motionFlags & 1) {
-    if (player.leftMotor <= 0) {
-      player.leftMotor += motorResponse.offset;
-    }
-    player.leftMotor += motorResponse.coeff2;
-  }
-  if (motionFlags & 2) {
-    if (player.rightMotor <= 0) {
-      player.rightMotor += motorResponse.offset;
-    }
-    player.rightMotor += motorResponse.coeff2;
-  }
-  if (motionFlags & 4) {
-    if (player.leftMotor >= 0) {
-      player.leftMotor -= motorResponse.offset;
-    }
-    player.leftMotor -= motorResponse.coeff2;
-  }
-  if (motionFlags & 8) {
-    if (player.rightMotor >= 0) {
-      player.rightMotor -= motorResponse.offset;
-    }
-    player.rightMotor -= motorResponse.coeff2;
-  }
+  const forwardInput = clamp(player.input.moveForward, -1, 1);
+  const turnInput = clamp(player.input.turnBody, -1, 1);
+  const strafeInput = clamp(player.input.strafe, -1, 1);
+  const leftCommand = clamp(forwardInput + turnInput, -1, 1);
+  const rightCommand = clamp(forwardInput - turnInput, -1, 1);
+
+  player.leftMotor = applyMotorCommand(player.leftMotor, leftCommand);
+  player.rightMotor = applyMotorCommand(player.rightMotor, rightCommand);
+  player.strafeMotor = applyMotorCommand(player.strafeMotor, strafeInput);
 
   const distance = (player.leftMotor + player.rightMotor) / 2;
   const headChange = fpsCoefficient2((player.rightMotor - player.leftMotor) * HECTOR_TURNING_EFFECT, fpsScale);
-  player.distance = distance;
+  const strafeDistance = player.strafeMotor;
+  player.distance = Math.abs(distance) > 0.0001 ? distance : (Math.abs(strafeDistance) > 0.0001 ? strafeDistance : 0);
   player.headChange = Math.abs(headChange) < 0.00005 ? 0 : headChange;
   const averageHeading = player.bodyYaw + headChange / 2;
-  const motorDirX = Math.sin(averageHeading) * distance;
-  const motorDirZ = Math.cos(averageHeading) * distance;
+  const motorDirX = (Math.sin(averageHeading) * distance) + (Math.cos(averageHeading) * strafeDistance);
+  const motorDirZ = (Math.cos(averageHeading) * distance) - (Math.sin(averageHeading) * strafeDistance);
   const supportTraction = player.supportTraction;
   const supportFriction = player.supportFriction;
   const slideX = motorDirX - player.vx;
@@ -2907,6 +2899,7 @@ function spawnFreshPlayer(
     vz: 0,
     leftMotor: 0,
     rightMotor: 0,
+    strafeMotor: 0,
     bodyYaw: spawn.yaw,
     turretYaw: spawn.yaw,
     turretPitch: 0,
@@ -3440,6 +3433,7 @@ function describePickup(pickup: PickupState): string {
 function emptyInput(): PlayerInputState {
   return {
     moveForward: 0,
+    strafe: 0,
     turnBody: 0,
     aimYaw: 0,
     aimPitch: 0,

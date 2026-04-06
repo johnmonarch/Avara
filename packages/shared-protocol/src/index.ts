@@ -27,6 +27,7 @@ export interface InputPacket {
   type: "input";
   sequence: number;
   moveForward: number;
+  strafe?: number;
   turnBody: number;
   aimYaw: number;
   aimPitch: number;

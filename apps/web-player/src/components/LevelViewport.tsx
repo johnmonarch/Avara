@@ -92,7 +92,7 @@ const SMART_MISSILE_MOUNT_OFFSET = { x: 0, y: 0.45, z: 0.6 };
 const GRENADE_MOUNT_OFFSET = { x: 0, y: -0.2, z: 0.95 };
 const SMART_MISSILE_TARGET_RANGE = 160;
 const BSP_FORWARD_YAW_OFFSET = -Math.PI / 2;
-const FIRST_PERSON_HULL_OFFSET = { x: 0.14, y: -0.08, z: -0.98 };
+const FIRST_PERSON_HULL_OFFSET = { x: 0, y: -0.16, z: -1.08 };
 const FIRST_PERSON_SMART_MISSILE_MOUNT_OFFSET = { x: 0, y: 0.45, z: -0.6 };
 const FIRST_PERSON_GRENADE_MOUNT_OFFSET = { x: 0, y: -0.2, z: -0.95 };
 const PLAYER_PLASMA_RANGE = 150;
@@ -1421,25 +1421,25 @@ function updateWalkerAssemblyPose(root: THREE.Group, player: SnapshotPlayerState
   const leftUpper = root.getObjectByName("walker-left-upper");
   if (leftUpper) {
     leftUpper.position.set(HECTOR_LEG_SPACE, headHeight, 0);
-    leftUpper.rotation.set(leftPose.upperAngle, 0, 0);
+    leftUpper.rotation.set(-leftPose.upperAngle, 0, 0);
   }
 
   const rightUpper = root.getObjectByName("walker-right-upper");
   if (rightUpper) {
     rightUpper.position.set(-HECTOR_LEG_SPACE, headHeight, 0);
-    rightUpper.rotation.set(rightPose.upperAngle, 0, 0);
+    rightUpper.rotation.set(-rightPose.upperAngle, 0, 0);
   }
 
   const leftLower = root.getObjectByName("walker-left-lower");
   if (leftLower) {
     leftLower.position.set(0, -HECTOR_LEG_HIGH_LENGTH, 0);
-    leftLower.rotation.set(leftPose.lowerAngle, 0, 0);
+    leftLower.rotation.set(-leftPose.lowerAngle, 0, 0);
   }
 
   const rightLower = root.getObjectByName("walker-right-lower");
   if (rightLower) {
     rightLower.position.set(0, -HECTOR_LEG_HIGH_LENGTH, 0);
-    rightLower.rotation.set(rightPose.lowerAngle, 0, 0);
+    rightLower.rotation.set(-rightPose.lowerAngle, 0, 0);
   }
 }
 
@@ -1467,6 +1467,21 @@ function createFirstPersonCockpitRig(): THREE.Group {
   };
   syncBspRenderable(hull, LIVE_ASSET_URLS.hectorHead, hullPalette);
 
+  const gunsRig = new THREE.Group();
+  gunsRig.name = "first-person-guns";
+  gunsRig.rotation.y = -BSP_FORWARD_YAW_OFFSET;
+  hullAnchor.add(gunsRig);
+
+  const leftGun = createFirstPersonGunMesh("left");
+  leftGun.name = "first-person-left-gun";
+  leftGun.position.set(-GUN_MOUNT_OFFSET_X, -0.16, -0.82);
+  gunsRig.add(leftGun);
+
+  const rightGun = createFirstPersonGunMesh("right");
+  rightGun.name = "first-person-right-gun";
+  rightGun.position.set(GUN_MOUNT_OFFSET_X, -0.16, -0.82);
+  gunsRig.add(rightGun);
+
   const loadedMissile = new THREE.Group();
   loadedMissile.name = "first-person-loaded-missile";
   loadedMissile.position.set(
@@ -1486,6 +1501,35 @@ function createFirstPersonCockpitRig(): THREE.Group {
   );
   hullAnchor.add(loadedGrenade);
   attachBspRenderable(loadedGrenade, LIVE_ASSET_URLS.grenade, createProjectilePalette("grenade"));
+
+  return root;
+}
+
+function createFirstPersonGunMesh(side: "left" | "right"): THREE.Group {
+  const root = new THREE.Group();
+  const barrelMaterial = new THREE.MeshStandardMaterial({
+    color: "#3e4148",
+    metalness: 0.25,
+    roughness: 0.48
+  });
+  const mountMaterial = new THREE.MeshStandardMaterial({
+    color: "#24262c",
+    metalness: 0.22,
+    roughness: 0.62
+  });
+
+  const housing = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.12, 0.28), mountMaterial);
+  housing.position.set(0, 0.01, -0.06);
+  root.add(housing);
+
+  const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.62), barrelMaterial);
+  barrel.position.set(0, -0.01, -0.36);
+  root.add(barrel);
+
+  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.08, 0.18), barrelMaterial);
+  fin.position.set(side === "left" ? -0.05 : 0.05, 0.02, -0.2);
+  fin.rotation.z = side === "left" ? -0.18 : 0.18;
+  root.add(fin);
 
   return root;
 }

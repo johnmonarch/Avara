@@ -102,6 +102,8 @@ interface ViewportTelemetry {
 interface BindingMap {
   moveForwardPositive: string[];
   moveForwardNegative: string[];
+  strafeLeft: string[];
+  strafeRight: string[];
   turnLeft: string[];
   turnRight: string[];
   verticalMotionKeys: string[];
@@ -1436,18 +1438,21 @@ function buildCombatInput(
   const moveForward =
     (isBindingActive(keys, bindings.moveForwardPositive) ? 1 : 0) +
     (isBindingActive(keys, bindings.moveForwardNegative) ? -1 : 0);
+  const strafe =
+    (isBindingActive(keys, bindings.strafeRight) ? 1 : 0) +
+    (isBindingActive(keys, bindings.strafeLeft) ? -1 : 0);
   const keyTurn =
     (isBindingActive(keys, bindings.turnRight) ? 1 : 0) +
     (isBindingActive(keys, bindings.turnLeft) ? -1 : 0);
   const pointerLocked = typeof document !== "undefined" && Boolean(document.pointerLockElement);
-  const useMouseSteer =
-    settings.controlPreset === "modernized" && pointerLocked && Math.abs(moveForward) > 0.001
-      && Math.abs(look.aimYaw) > 0.0001;
-  const mouseSteer = useMouseSteer ? clamp(look.aimYaw / 0.45, -1, 1) : 0;
+  const modernizedPointerSteer = settings.controlPreset === "modernized" && pointerLocked;
+  const mouseSteer = modernizedPointerSteer ? clamp(look.aimYaw / 0.2, -1, 1) : 0;
+  const carriedAimYaw = modernizedPointerSteer ? clamp(look.aimYaw * 0.14, -0.16, 0.16) : look.aimYaw;
   const payload = {
     moveForward,
-    turnBody: useMouseSteer ? mouseSteer : clamp(keyTurn, -1, 1),
-    aimYaw: look.aimYaw,
+    strafe: settings.controlPreset === "modernized" ? clamp(strafe, -1, 1) : 0,
+    turnBody: modernizedPointerSteer ? mouseSteer : clamp(keyTurn, -1, 1),
+    aimYaw: carriedAimYaw,
     aimPitch: look.aimPitch,
     stanceDelta: stanceDeltaRef.current,
     primaryFire: primaryFire || isBindingActive(keys, bindings.primaryFireKeys),
@@ -1472,6 +1477,8 @@ function getBindingMap(controlPreset: PlayerSettings["controlPreset"]): BindingM
     return {
       moveForwardPositive: ["KeyW"],
       moveForwardNegative: ["KeyS"],
+      strafeLeft: [],
+      strafeRight: [],
       turnLeft: ["KeyA"],
       turnRight: ["KeyD"],
       verticalMotionKeys: ["ControlLeft"],
@@ -1487,8 +1494,10 @@ function getBindingMap(controlPreset: PlayerSettings["controlPreset"]): BindingM
   return {
     moveForwardPositive: ["KeyW", "ArrowUp"],
     moveForwardNegative: ["KeyS", "ArrowDown"],
-    turnLeft: ["KeyA", "ArrowLeft"],
-    turnRight: ["KeyD", "ArrowRight"],
+    strafeLeft: ["KeyA", "ArrowLeft"],
+    strafeRight: ["KeyD", "ArrowRight"],
+    turnLeft: [],
+    turnRight: [],
     verticalMotionKeys: ["ControlLeft"],
     primaryFireKeys: [],
     boostKeys: ["ShiftLeft", "ShiftRight"],

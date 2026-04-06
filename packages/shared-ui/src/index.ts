@@ -33,7 +33,8 @@ export const CONTROL_PRESET_BINDINGS: Record<ControlPreset["id"], ControlBinding
   ],
   modernized: [
     { action: "Drive", keys: "W / S or Up / Down" },
-    { action: "Steer body", keys: "Mouse while moving, or A / D" },
+    { action: "Steer body", keys: "Mouse" },
+    { action: "Sidestep", keys: "A / D or Left / Right" },
     { action: "Aim turret", keys: "Mouse" },
     { action: "Vertical motion", keys: "Left Ctrl + Mouse" },
     { action: "Primary fire", keys: "Left click" },
