@@ -1395,13 +1395,13 @@ function buildCombatInput(
     (isBindingActive(keys, bindings.turnRight) ? 1 : 0) +
     (isBindingActive(keys, bindings.turnLeft) ? -1 : 0);
   const pointerLocked = typeof document !== "undefined" && Boolean(document.pointerLockElement);
-  const mouseSteer =
+  const useMouseSteer =
     settings.controlPreset === "modernized" && pointerLocked && Math.abs(moveForward) > 0.001
-      ? clamp(look.aimYaw / 0.45, -1, 1)
-      : 0;
+      && Math.abs(look.aimYaw) > 0.0001;
+  const mouseSteer = useMouseSteer ? clamp(look.aimYaw / 0.45, -1, 1) : 0;
   const payload = {
     moveForward,
-    turnBody: clamp(keyTurn + mouseSteer, -1, 1),
+    turnBody: useMouseSteer ? mouseSteer : clamp(keyTurn, -1, 1),
     aimYaw: look.aimYaw,
     aimPitch: look.aimPitch,
     stanceDelta: stanceDeltaRef.current,

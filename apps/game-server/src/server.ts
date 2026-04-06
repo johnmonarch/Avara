@@ -2660,7 +2660,25 @@ function toSnapshotPlayer(room: RoomState) {
     shapeId: player.hullShapeId,
     shapeKey: player.hullShapeKey,
     shapeAssetUrl: player.hullShapeAssetUrl,
-    rideHeight: player.rideHeight
+    rideHeight: player.rideHeight,
+    legs: [
+      {
+        x: player.legs[0].x,
+        y: player.legs[0].y,
+        whereX: player.legs[0].whereX,
+        whereY: player.legs[0].whereY,
+        whereZ: player.legs[0].whereZ,
+        touching: player.legs[0].touching
+      },
+      {
+        x: player.legs[1].x,
+        y: player.legs[1].y,
+        whereX: player.legs[1].whereX,
+        whereY: player.legs[1].whereY,
+        whereZ: player.legs[1].whereZ,
+        touching: player.legs[1].touching
+      }
+    ]
   });
 }
 

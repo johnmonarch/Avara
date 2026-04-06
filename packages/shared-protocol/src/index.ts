@@ -79,6 +79,16 @@ export interface SnapshotPlayerState {
   targetLocked?: boolean;
   scoutView?: boolean;
   scoutId?: string;
+  legs?: [SnapshotWalkerLegState, SnapshotWalkerLegState];
+}
+
+export interface SnapshotWalkerLegState {
+  x: number;
+  y: number;
+  whereX: number;
+  whereY: number;
+  whereZ: number;
+  touching: boolean;
 }
 
 export interface SnapshotScoutState {

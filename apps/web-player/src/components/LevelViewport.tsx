@@ -3,6 +3,7 @@ import * as THREE from "three";
 
 import type {
   SnapshotFragmentState,
+  SnapshotWalkerLegState,
   SnapshotScoutState,
   SnapshotPacket,
   SnapshotPickupState,
@@ -91,7 +92,7 @@ const SMART_MISSILE_MOUNT_OFFSET = { x: 0, y: 0.45, z: 0.6 };
 const GRENADE_MOUNT_OFFSET = { x: 0, y: -0.2, z: 0.95 };
 const SMART_MISSILE_TARGET_RANGE = 160;
 const BSP_FORWARD_YAW_OFFSET = -Math.PI / 2;
-const FIRST_PERSON_HULL_OFFSET = { x: 0, y: -0.38, z: -0.94 };
+const FIRST_PERSON_HULL_OFFSET = { x: 0, y: -0.12, z: -0.18 };
 const FIRST_PERSON_SMART_MISSILE_MOUNT_OFFSET = { x: 0, y: 0.45, z: -0.6 };
 const FIRST_PERSON_GRENADE_MOUNT_OFFSET = { x: 0, y: -0.2, z: -0.95 };
 const PLAYER_PLASMA_RANGE = 150;
@@ -1390,21 +1391,15 @@ function updateWalkerAssemblyPose(root: THREE.Group, player: SnapshotPlayerState
 
   const leftMotor = player.leftMotor ?? 0;
   const rightMotor = player.rightMotor ?? 0;
-  const gaitMagnitude = Math.min(1, (Math.abs(leftMotor) + Math.abs(rightMotor)) / 0.3);
-  const direction = leftMotor + rightMotor >= 0 ? 1 : -1;
-  const phaseAdvance = gaitMagnitude * 5.5 * elapsedSeconds * direction;
-  const nextPhase = (Number(root.userData.walkerPhase) || 0) + phaseAdvance;
-  root.userData.walkerPhase = nextPhase;
-
   const elevation = player.stance ?? HECTOR_DEFAULT_STANCE;
   const crouch = player.crouch ?? 0;
-  const hipHeight = Math.max(0.95, elevation - crouch);
+  const headHeight = Math.max(0.95, elevation - crouch);
   const yawDelta = normalizeAngle(player.turretYaw - player.bodyYaw);
   const rideHeight = player.rideHeight ?? HECTOR_DEFAULT_RIDE_HEIGHT;
 
   const hull = root.getObjectByName("walker-hull");
   if (hull) {
-    hull.position.set(0, hipHeight + rideHeight, 0);
+    hull.position.set(0, headHeight + rideHeight, 0);
     hull.rotation.order = "ZXY";
     hull.rotation.set(player.turretPitch, yawDelta, -yawDelta / 6);
   }
@@ -1419,48 +1414,34 @@ function updateWalkerAssemblyPose(root: THREE.Group, player: SnapshotPlayerState
     loadedGrenade.visible = player.weaponLoad === "grenade";
   }
 
-  const turnBias = Math.max(-0.35, Math.min(0.35, (rightMotor - leftMotor) / 0.18));
-  const strideReach = 0.26 + gaitMagnitude * 0.34;
-  const footLift = 0.08 + gaitMagnitude * 0.22;
-
-  const leftPose = solveWalkerLegPose(hipHeight, strideReach * Math.sin(nextPhase) - turnBias * 0.1, footLift * Math.max(0, Math.sin(nextPhase)));
-  const rightPose = solveWalkerLegPose(
-    hipHeight,
-    strideReach * Math.sin(nextPhase + Math.PI) + turnBias * 0.1,
-    footLift * Math.max(0, Math.sin(nextPhase + Math.PI))
-  );
+  const legs = player.legs;
+  const leftLeg = legs?.[0];
+  const rightLeg = legs?.[1];
+  const leftPose = leftLeg ? solveWalkerLegPose(headHeight, leftLeg) : { upperAngle: 0, lowerAngle: 0 };
+  const rightPose = rightLeg ? solveWalkerLegPose(headHeight, rightLeg) : { upperAngle: 0, lowerAngle: 0 };
 
   const leftUpper = root.getObjectByName("walker-left-upper");
   if (leftUpper) {
-    leftUpper.position.set(HECTOR_LEG_SPACE, hipHeight, 0);
+    leftUpper.position.set(HECTOR_LEG_SPACE, headHeight, 0);
     leftUpper.rotation.set(leftPose.upperAngle, 0, 0);
   }
 
   const rightUpper = root.getObjectByName("walker-right-upper");
   if (rightUpper) {
-    rightUpper.position.set(-HECTOR_LEG_SPACE, hipHeight, 0);
+    rightUpper.position.set(-HECTOR_LEG_SPACE, headHeight, 0);
     rightUpper.rotation.set(rightPose.upperAngle, 0, 0);
   }
 
   const leftLower = root.getObjectByName("walker-left-lower");
   if (leftLower) {
     leftLower.position.set(0, -HECTOR_LEG_HIGH_LENGTH, 0);
-    leftLower.rotation.set(-leftPose.lowerAngle, 0, 0);
+    leftLower.rotation.set(leftPose.lowerAngle, 0, 0);
   }
 
   const rightLower = root.getObjectByName("walker-right-lower");
   if (rightLower) {
     rightLower.position.set(0, -HECTOR_LEG_HIGH_LENGTH, 0);
-    rightLower.rotation.set(-rightPose.lowerAngle, 0, 0);
-  }
-
-  const rig = root.getObjectByName("walker-rig") as THREE.Group | undefined;
-  if (rig) {
-    rig.position.y = 0;
-    root.updateMatrixWorld(true);
-    const bounds = new THREE.Box3().setFromObject(rig);
-    const localMin = root.worldToLocal(bounds.min.clone()).y;
-    rig.position.y = Number.isFinite(localMin) ? -localMin : 0;
+    rightLower.rotation.set(rightPose.lowerAngle, 0, 0);
   }
 }
 
@@ -1542,7 +1523,7 @@ function updateFirstPersonCockpitRig(
   const hull = root.getObjectByName("first-person-hull");
   if (hull) {
     hull.rotation.order = "ZXY";
-    hull.rotation.set(player.turretPitch * 0.12, 0, 0);
+    hull.rotation.set(0, 0, 0);
   }
 
   const loadedMissile = root.getObjectByName("first-person-loaded-missile");
@@ -1619,30 +1600,20 @@ function getPlayerViewTargetHeight(player: SnapshotPlayerState): number {
   return Math.max(1.85, (player.stance ?? HECTOR_DEFAULT_STANCE) + HECTOR_VIEWPORT_HEIGHT);
 }
 
-function solveWalkerLegPose(hipHeight: number, forwardOffset: number, lift: number): { upperAngle: number; lowerAngle: number } {
-  const clampedTargetY = -(Math.max(0.25, hipHeight - lift));
-  const distance = Math.min(
-    HECTOR_LEG_HIGH_LENGTH + HECTOR_LEG_LOW_LENGTH - 0.001,
-    Math.max(0.1, Math.hypot(forwardOffset, clampedTargetY))
+function solveWalkerLegPose(headHeight: number, leg: SnapshotWalkerLegState): { upperAngle: number; lowerAngle: number } {
+  const extendDeltaX = -leg.x;
+  const extendDeltaY = headHeight - leg.y;
+  const extendLength = Math.min(
+    HECTOR_LEG_HIGH_LENGTH + HECTOR_LEG_LOW_LENGTH,
+    Math.max(0.0001, Math.hypot(extendDeltaX, extendDeltaY))
   );
-  const kneeInterior = Math.acos(
-    THREE.MathUtils.clamp(
-      (HECTOR_LEG_HIGH_LENGTH ** 2 + HECTOR_LEG_LOW_LENGTH ** 2 - distance ** 2)
-      / (2 * HECTOR_LEG_HIGH_LENGTH * HECTOR_LEG_LOW_LENGTH),
-      -1,
-      1
-    )
-  );
-  const upperReach = Math.acos(
-    THREE.MathUtils.clamp(
-      (HECTOR_LEG_HIGH_LENGTH ** 2 + distance ** 2 - HECTOR_LEG_LOW_LENGTH ** 2)
-      / (2 * HECTOR_LEG_HIGH_LENGTH * distance),
-      -1,
-      1
-    )
-  );
-  const upperAngle = Math.atan2(forwardOffset, -clampedTargetY) - upperReach;
-  const lowerAngle = Math.PI - kneeInterior;
+  const legConstant = (HECTOR_LEG_HIGH_LENGTH ** 2) - (HECTOR_LEG_LOW_LENGTH ** 2);
+  const highPart = ((legConstant / extendLength) + extendLength) / 2;
+  const lowPart = extendLength - highPart;
+  const normalPart = Math.sqrt(Math.max(0, (HECTOR_LEG_HIGH_LENGTH ** 2) - (highPart ** 2)));
+  const elbowAngle = Math.atan2(highPart, normalPart);
+  const upperAngle = Math.atan2(extendDeltaY, extendDeltaX) + elbowAngle;
+  const lowerAngle = -(elbowAngle + Math.atan2(lowPart, normalPart));
   return { upperAngle, lowerAngle };
 }
 
