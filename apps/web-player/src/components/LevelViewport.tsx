@@ -460,14 +460,16 @@ export default function LevelViewport({
       const pointerLockedToArena = document.pointerLockElement === renderer.domElement;
       if (liveLocalPlayer) {
         if (!pointerLockedToArena) {
-          const yawError = normalizeAngle(liveLocalPlayer.turretYaw - heading.current.yaw);
+          const liveTurretViewYaw = simulationYawToViewYaw(liveLocalPlayer.turretYaw);
+          const yawError = normalizeAngle(liveTurretViewYaw - heading.current.yaw);
           heading.current.yaw = normalizeAngle(heading.current.yaw + yawError * 0.46);
           heading.current.pitch += (liveLocalPlayer.turretPitch - heading.current.pitch) * 0.36;
         }
       }
       if (liveLocalPlayer && aimCallbackRef.current) {
+        const liveBodyViewYaw = simulationYawToViewYaw(liveLocalPlayer.bodyYaw);
         aimCallbackRef.current({
-          aimYaw: THREE.MathUtils.clamp(normalizeAngle(heading.current.yaw - liveLocalPlayer.bodyYaw), -1.2, 1.2),
+          aimYaw: THREE.MathUtils.clamp(normalizeAngle(heading.current.yaw - liveBodyViewYaw), -1.2, 1.2),
           aimPitch: THREE.MathUtils.clamp(heading.current.pitch, -0.8, 0.5),
           viewYaw: heading.current.yaw
         });
@@ -1326,7 +1328,6 @@ function updatePlayerMarker(object: THREE.Object3D, player: SnapshotPlayerState)
 function createWalkerAssemblyMarker(player: SnapshotPlayerState, isLocal: boolean): THREE.Group {
   const root = new THREE.Group();
   root.userData.playerVisualKind = "walker";
-  root.userData.baseYawOffset = BSP_FORWARD_YAW_OFFSET;
   root.rotation.order = "YXZ";
 
   const palette = createWalkerPalette(player, isLocal);
@@ -1338,31 +1339,41 @@ function createWalkerAssemblyMarker(player: SnapshotPlayerState, isLocal: boolea
   hullPivot.name = "walker-hull";
   hullPivot.matrixAutoUpdate = false;
   rig.add(hullPivot);
-  attachBspRenderable(hullPivot, player.shapeAssetUrl ?? LIVE_ASSET_URLS.hector, palette);
+  attachBspRenderable(hullPivot, player.shapeAssetUrl ?? LIVE_ASSET_URLS.hector, palette, {
+    preRotateY: BSP_FORWARD_YAW_OFFSET
+  });
 
   const leftUpper = new THREE.Group();
   leftUpper.name = "walker-left-upper";
   leftUpper.matrixAutoUpdate = false;
   rig.add(leftUpper);
-  attachBspRenderable(leftUpper, LIVE_ASSET_URLS.hectorLegHigh, palette);
+  attachBspRenderable(leftUpper, LIVE_ASSET_URLS.hectorLegHigh, palette, {
+    preRotateY: BSP_FORWARD_YAW_OFFSET
+  });
 
   const rightUpper = new THREE.Group();
   rightUpper.name = "walker-right-upper";
   rightUpper.matrixAutoUpdate = false;
   rig.add(rightUpper);
-  attachBspRenderable(rightUpper, LIVE_ASSET_URLS.hectorLegHigh, palette);
+  attachBspRenderable(rightUpper, LIVE_ASSET_URLS.hectorLegHigh, palette, {
+    preRotateY: BSP_FORWARD_YAW_OFFSET
+  });
 
   const leftLower = new THREE.Group();
   leftLower.name = "walker-left-lower";
   leftLower.matrixAutoUpdate = false;
   rig.add(leftLower);
-  attachBspRenderable(leftLower, LIVE_ASSET_URLS.hectorLegLow, palette);
+  attachBspRenderable(leftLower, LIVE_ASSET_URLS.hectorLegLow, palette, {
+    preRotateY: BSP_FORWARD_YAW_OFFSET
+  });
 
   const rightLower = new THREE.Group();
   rightLower.name = "walker-right-lower";
   rightLower.matrixAutoUpdate = false;
   rig.add(rightLower);
-  attachBspRenderable(rightLower, LIVE_ASSET_URLS.hectorLegLow, palette);
+  attachBspRenderable(rightLower, LIVE_ASSET_URLS.hectorLegLow, palette, {
+    preRotateY: BSP_FORWARD_YAW_OFFSET
+  });
 
   const loadedMissile = new THREE.Group();
   loadedMissile.name = "walker-loaded-missile";
@@ -1372,7 +1383,9 @@ function createWalkerAssemblyMarker(player: SnapshotPlayerState, isLocal: boolea
     SMART_MISSILE_MOUNT_OFFSET.z
   );
   hullPivot.add(loadedMissile);
-  attachBspRenderable(loadedMissile, LIVE_ASSET_URLS.missile, createProjectilePalette("missile"));
+  attachBspRenderable(loadedMissile, LIVE_ASSET_URLS.missile, createProjectilePalette("missile"), {
+    preRotateY: BSP_FORWARD_YAW_OFFSET
+  });
 
   const loadedGrenade = new THREE.Group();
   loadedGrenade.name = "walker-loaded-grenade";
@@ -1382,7 +1395,9 @@ function createWalkerAssemblyMarker(player: SnapshotPlayerState, isLocal: boolea
     GRENADE_MOUNT_OFFSET.z
   );
   hullPivot.add(loadedGrenade);
-  attachBspRenderable(loadedGrenade, LIVE_ASSET_URLS.grenade, createProjectilePalette("grenade"));
+  attachBspRenderable(loadedGrenade, LIVE_ASSET_URLS.grenade, createProjectilePalette("grenade"), {
+    preRotateY: BSP_FORWARD_YAW_OFFSET
+  });
 
   updateWalkerAssemblyPose(root, player);
   return root;
@@ -1605,7 +1620,9 @@ function createFirstPersonCockpitRig(): THREE.Group {
     FIRST_PERSON_SMART_MISSILE_MOUNT_OFFSET.z
   );
   hullAnchor.add(loadedMissile);
-  attachBspRenderable(loadedMissile, LIVE_ASSET_URLS.missile, createProjectilePalette("missile"));
+  attachBspRenderable(loadedMissile, LIVE_ASSET_URLS.missile, createProjectilePalette("missile"), {
+    preRotateY: BSP_FORWARD_YAW_OFFSET
+  });
 
   const loadedGrenade = new THREE.Group();
   loadedGrenade.name = "first-person-loaded-grenade";
@@ -1615,7 +1632,9 @@ function createFirstPersonCockpitRig(): THREE.Group {
     FIRST_PERSON_GRENADE_MOUNT_OFFSET.z
   );
   hullAnchor.add(loadedGrenade);
-  attachBspRenderable(loadedGrenade, LIVE_ASSET_URLS.grenade, createProjectilePalette("grenade"));
+  attachBspRenderable(loadedGrenade, LIVE_ASSET_URLS.grenade, createProjectilePalette("grenade"), {
+    preRotateY: BSP_FORWARD_YAW_OFFSET
+  });
 
   return root;
 }
@@ -2230,6 +2249,10 @@ function normalizeAngle(value: number): number {
     angle -= Math.PI * 2;
   }
   return angle;
+}
+
+function simulationYawToViewYaw(simulationYaw: number): number {
+  return normalizeAngle((Math.PI / 2) - simulationYaw);
 }
 
 function directionFromYawPitch(yaw: number, pitch: number): { x: number; y: number; z: number } {

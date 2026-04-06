@@ -1449,7 +1449,7 @@ function buildCombatInput(
   const payload = {
     moveForward,
     strafe: settings.controlPreset === "modernized" ? clamp(strafe, -1, 1) : 0,
-    bodyYawTarget: modernizedPointerSteer ? look.viewYaw : undefined,
+    bodyYawTarget: modernizedPointerSteer ? viewYawToSimulationYaw(look.viewYaw) : undefined,
     turnBody: modernizedPointerSteer ? 0 : clamp(keyTurn, -1, 1),
     aimYaw: carriedAimYaw,
     aimPitch: look.aimPitch,
@@ -1513,6 +1513,21 @@ function isBindingActive(keys: Record<string, boolean>, codes: string[]): boolea
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function normalizeAngle(value: number): number {
+  let angle = value;
+  while (angle <= -Math.PI) {
+    angle += Math.PI * 2;
+  }
+  while (angle > Math.PI) {
+    angle -= Math.PI * 2;
+  }
+  return angle;
+}
+
+function viewYawToSimulationYaw(viewYaw: number): number {
+  return normalizeAngle((Math.PI / 2) - viewYaw);
 }
 
 function playerSettingsEqual(left: PlayerSettings, right: PlayerSettings): boolean {
