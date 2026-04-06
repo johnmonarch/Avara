@@ -149,7 +149,7 @@ export function App() {
   }));
 
   const keyStateRef = useRef<Record<string, boolean>>({});
-  const lookStateRef = useRef({ aimYaw: 0, aimPitch: 0 });
+  const lookStateRef = useRef({ aimYaw: 0, aimPitch: 0, viewYaw: Math.PI / 2 });
   const stanceDeltaRef = useRef(0);
   const queuedActionRef = useRef<{
     loadMissile: boolean;
@@ -1423,7 +1423,7 @@ export function App() {
 
 function buildCombatInput(
   keys: Record<string, boolean>,
-  look: { aimYaw: number; aimPitch: number },
+  look: { aimYaw: number; aimPitch: number; viewYaw: number },
   stanceDeltaRef: { current: number },
   queuedActions: {
     loadMissile: boolean;
@@ -1446,12 +1446,12 @@ function buildCombatInput(
     (isBindingActive(keys, bindings.turnLeft) ? -1 : 0);
   const pointerLocked = typeof document !== "undefined" && Boolean(document.pointerLockElement);
   const modernizedPointerSteer = settings.controlPreset === "modernized" && pointerLocked;
-  const mouseSteer = modernizedPointerSteer ? clamp(look.aimYaw / 0.2, -1, 1) : 0;
-  const carriedAimYaw = modernizedPointerSteer ? clamp(look.aimYaw * 0.14, -0.16, 0.16) : look.aimYaw;
+  const carriedAimYaw = modernizedPointerSteer ? 0 : look.aimYaw;
   const payload = {
     moveForward,
     strafe: settings.controlPreset === "modernized" ? clamp(strafe, -1, 1) : 0,
-    turnBody: modernizedPointerSteer ? mouseSteer : clamp(keyTurn, -1, 1),
+    bodyYawTarget: modernizedPointerSteer ? look.viewYaw : undefined,
+    turnBody: modernizedPointerSteer ? 0 : clamp(keyTurn, -1, 1),
     aimYaw: carriedAimYaw,
     aimPitch: look.aimPitch,
     stanceDelta: stanceDeltaRef.current,

@@ -25,7 +25,7 @@ interface LevelViewportProps {
   onArenaAction?: () => void;
   playerSettings: PlayerSettings;
   prototypeStatus: "idle" | "bootstrapping" | "live";
-  onAimChange?: (aim: { aimYaw: number; aimPitch: number }) => void;
+  onAimChange?: (aim: { aimYaw: number; aimPitch: number; viewYaw: number }) => void;
   isVerticalMotionActive?: () => boolean;
   onStanceAdjust?: (delta: number) => void;
   onPointerLockChange?: (locked: boolean) => void;
@@ -83,7 +83,6 @@ const HECTOR_LEG_HIGH_LENGTH = 0.905;
 const HECTOR_LEG_LOW_LENGTH = 1.15;
 const HECTOR_VIEWPORT_HEIGHT = 0.35;
 const HECTOR_DEFAULT_STANCE = 1.7;
-const HECTOR_DEFAULT_RIDE_HEIGHT = 0.2500038147554742;
 const VIEW_OFFSET_Y = -0.25;
 const GUN_MOUNT_OFFSET_X = 0.25;
 const GUN_MOUNT_OFFSET_Y = 0;
@@ -92,9 +91,10 @@ const SMART_MISSILE_MOUNT_OFFSET = { x: 0, y: 0.45, z: 0.6 };
 const GRENADE_MOUNT_OFFSET = { x: 0, y: -0.2, z: 0.95 };
 const SMART_MISSILE_TARGET_RANGE = 160;
 const BSP_FORWARD_YAW_OFFSET = -Math.PI / 2;
-const FIRST_PERSON_HULL_OFFSET = { x: 0, y: -0.16, z: -1.08 };
-const FIRST_PERSON_SMART_MISSILE_MOUNT_OFFSET = { x: 0, y: 0.45, z: -0.6 };
-const FIRST_PERSON_GRENADE_MOUNT_OFFSET = { x: 0, y: -0.2, z: -0.95 };
+const FIRST_PERSON_LEFT_GUN_OFFSET = { x: -1.06, y: -0.7, z: -1.55 };
+const FIRST_PERSON_RIGHT_GUN_OFFSET = { x: 1.06, y: -0.7, z: -1.55 };
+const FIRST_PERSON_SMART_MISSILE_MOUNT_OFFSET = { x: 0, y: 0.02, z: -1.24 };
+const FIRST_PERSON_GRENADE_MOUNT_OFFSET = { x: 0, y: -0.22, z: -1.08 };
 const PLAYER_PLASMA_RANGE = 150;
 const PLAYER_PLASMA_FALLBACK_RANGE = PLAYER_PLASMA_RANGE / 4;
 const RETICLE_DISTANCE_OFFSET = 0.1;
@@ -468,7 +468,8 @@ export default function LevelViewport({
       if (liveLocalPlayer && aimCallbackRef.current) {
         aimCallbackRef.current({
           aimYaw: THREE.MathUtils.clamp(normalizeAngle(heading.current.yaw - liveLocalPlayer.bodyYaw), -1.2, 1.2),
-          aimPitch: THREE.MathUtils.clamp(heading.current.pitch, -0.8, 0.5)
+          aimPitch: THREE.MathUtils.clamp(heading.current.pitch, -0.8, 0.5),
+          viewYaw: heading.current.yaw
         });
       }
 
@@ -638,7 +639,7 @@ export default function LevelViewport({
             <p>
               {playerSettings.controlPreset === "classic"
                 ? "Drive with W/S, rotate the chassis with A/D, aim with the mouse, fire with left click, and keep crouch or jump on Space."
-                : "Drive with W/S or arrows, rotate the chassis with A/D or arrows, fire with left click, hold Space to crouch, and release it to jump."}
+                : "Drive with W/S or arrows, steer with the mouse, sidestep with A/D or arrows, fire with left click, hold Space to crouch, and release it to jump."}
             </p>
           </div>
         </div>
@@ -646,6 +647,7 @@ export default function LevelViewport({
 
       {pointerLocked ? (
         <div className={`reticle reticle-${reticleState}`} aria-hidden="true" ref={reticleRootRef}>
+          <span className="direction-pointer" />
           <span className="reticle-bracket reticle-bracket-left" ref={leftReticleRef}><span /></span>
           <span className="reticle-bracket reticle-bracket-right" ref={rightReticleRef}><span /></span>
         </div>
@@ -1385,7 +1387,6 @@ function updateWalkerAssemblyPose(root: THREE.Group, player: SnapshotPlayerState
   const crouch = player.crouch ?? 0;
   const headHeight = Math.max(0.95, elevation - crouch);
   const yawDelta = normalizeAngle(player.turretYaw - player.bodyYaw);
-  const rideHeight = player.rideHeight ?? HECTOR_DEFAULT_RIDE_HEIGHT;
   const rig = root.getObjectByName("walker-rig");
   if (rig) {
     rig.position.set(0, headHeight, 0);
@@ -1396,7 +1397,6 @@ function updateWalkerAssemblyPose(root: THREE.Group, player: SnapshotPlayerState
     applyNativeWalkerPartMatrix(
       hull,
       buildNativeHullMatrix({
-        rideHeight,
         viewYaw: yawDelta,
         viewPitch: player.turretPitch
       })
@@ -1519,12 +1519,12 @@ function nativePreFlipY(matrix: NativeMatrix): void {
   }
 }
 
-function buildNativeHullMatrix(input: { rideHeight: number; viewYaw: number; viewPitch: number }): NativeMatrix {
+function buildNativeHullMatrix(input: { viewYaw: number; viewPitch: number }): NativeMatrix {
   const matrix = createNativeIdentityMatrix();
   nativeInitialRotateZ(matrix, input.viewYaw / -6);
   nativeRotateX(matrix, input.viewPitch);
   nativeRotateY(matrix, input.viewYaw);
-  nativeTranslateY(matrix, input.rideHeight);
+  nativeTranslateY(matrix, HECTOR_VIEWPORT_HEIGHT);
   return matrix;
 }
 
@@ -1570,22 +1570,7 @@ function createFirstPersonCockpitRig(): THREE.Group {
 
   const hullAnchor = new THREE.Group();
   hullAnchor.name = "first-person-hull-anchor";
-  hullAnchor.position.set(FIRST_PERSON_HULL_OFFSET.x, FIRST_PERSON_HULL_OFFSET.y, FIRST_PERSON_HULL_OFFSET.z);
   root.add(hullAnchor);
-
-  const hull = new THREE.Group();
-  hull.name = "first-person-hull";
-  hullAnchor.add(hull);
-
-  const hullPalette: MarkerPalette = {
-    marker0: "#7a5c25",
-    marker1: "#5b4521",
-    marker2: "#a7d8ff",
-    marker3: "#161616",
-    fallback: "#7a5c25"
-  };
-  syncBspRenderable(hull, LIVE_ASSET_URLS.hectorHead, hullPalette);
-  hull.visible = false;
 
   const gunsRig = new THREE.Group();
   gunsRig.name = "first-person-guns";
@@ -1593,12 +1578,14 @@ function createFirstPersonCockpitRig(): THREE.Group {
 
   const leftGun = createFirstPersonGunMesh("left");
   leftGun.name = "first-person-left-gun";
-  leftGun.position.set(-0.28, -0.18, -0.86);
+  leftGun.position.set(FIRST_PERSON_LEFT_GUN_OFFSET.x, FIRST_PERSON_LEFT_GUN_OFFSET.y, FIRST_PERSON_LEFT_GUN_OFFSET.z);
+  leftGun.rotation.y = 0.16;
   gunsRig.add(leftGun);
 
   const rightGun = createFirstPersonGunMesh("right");
   rightGun.name = "first-person-right-gun";
-  rightGun.position.set(0.28, -0.18, -0.86);
+  rightGun.position.set(FIRST_PERSON_RIGHT_GUN_OFFSET.x, FIRST_PERSON_RIGHT_GUN_OFFSET.y, FIRST_PERSON_RIGHT_GUN_OFFSET.z);
+  rightGun.rotation.y = -0.16;
   gunsRig.add(rightGun);
 
   const loadedMissile = new THREE.Group();
@@ -1627,27 +1614,39 @@ function createFirstPersonCockpitRig(): THREE.Group {
 function createFirstPersonGunMesh(side: "left" | "right"): THREE.Group {
   const root = new THREE.Group();
   const barrelMaterial = new THREE.MeshStandardMaterial({
-    color: "#3e4148",
-    metalness: 0.25,
-    roughness: 0.48
+    color: "#474c55",
+    metalness: 0.18,
+    roughness: 0.58,
+    depthTest: false,
+    depthWrite: false
   });
   const mountMaterial = new THREE.MeshStandardMaterial({
-    color: "#24262c",
-    metalness: 0.22,
-    roughness: 0.62
+    color: "#2d3137",
+    metalness: 0.14,
+    roughness: 0.7,
+    depthTest: false,
+    depthWrite: false
   });
 
-  const housing = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.12, 0.28), mountMaterial);
-  housing.position.set(0, 0.01, -0.06);
+  const shoulder = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.2, 0.22), mountMaterial);
+  shoulder.position.set(0, 0.02, 0.02);
+  shoulder.renderOrder = 10;
+  root.add(shoulder);
+
+  const housing = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.16, 0.58), mountMaterial);
+  housing.position.set(0, -0.03, -0.24);
+  housing.renderOrder = 10;
   root.add(housing);
 
-  const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.62), barrelMaterial);
-  barrel.position.set(0, -0.01, -0.36);
+  const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 1.25), barrelMaterial);
+  barrel.position.set(0, -0.05, -0.9);
+  barrel.renderOrder = 10;
   root.add(barrel);
 
-  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.08, 0.18), barrelMaterial);
-  fin.position.set(side === "left" ? -0.05 : 0.05, 0.02, -0.2);
-  fin.rotation.z = side === "left" ? -0.18 : 0.18;
+  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.16, 0.34), barrelMaterial);
+  fin.position.set(side === "left" ? -0.11 : 0.11, 0.03, -0.48);
+  fin.rotation.z = side === "left" ? -0.22 : 0.22;
+  fin.renderOrder = 10;
   root.add(fin);
 
   return root;
@@ -1662,30 +1661,6 @@ function updateFirstPersonCockpitRig(
   root.visible = active;
   if (!active || !player) {
     return;
-  }
-
-  const hullPalette: MarkerPalette = {
-    marker0: "#7a5c25",
-    marker1: "#5b4521",
-    marker2: "#a7d8ff",
-    marker3: "#161616",
-    fallback: "#7a5c25"
-  };
-  const hullVisual = root.getObjectByName("first-person-hull");
-  if (hullVisual instanceof THREE.Group) {
-    syncBspRenderable(hullVisual, LIVE_ASSET_URLS.hectorHead, hullPalette);
-    hullVisual.visible = false;
-  }
-
-  const hullAnchor = root.getObjectByName("first-person-hull-anchor");
-  if (hullAnchor) {
-    hullAnchor.position.set(FIRST_PERSON_HULL_OFFSET.x, FIRST_PERSON_HULL_OFFSET.y, FIRST_PERSON_HULL_OFFSET.z);
-  }
-
-  const hull = root.getObjectByName("first-person-hull");
-  if (hull) {
-    hull.rotation.order = "ZXY";
-    hull.rotation.set(0, 0, 0);
   }
 
   const loadedMissile = root.getObjectByName("first-person-loaded-missile");
@@ -1761,14 +1736,14 @@ function buildPaletteRenderableGroup(
 function getPlayerViewTargetHeight(player: SnapshotPlayerState): number {
   return Math.max(
     1.6,
-    (player.stance ?? HECTOR_DEFAULT_STANCE) - (player.crouch ?? 0) + (player.rideHeight ?? HECTOR_DEFAULT_RIDE_HEIGHT)
+    (player.stance ?? HECTOR_DEFAULT_STANCE) - (player.crouch ?? 0) + HECTOR_VIEWPORT_HEIGHT
   );
 }
 
 function getPlayerCameraOriginHeight(player: SnapshotPlayerState): number {
   return Math.max(
     1.1,
-    (player.stance ?? HECTOR_DEFAULT_STANCE) - (player.crouch ?? 0) + (player.rideHeight ?? HECTOR_DEFAULT_RIDE_HEIGHT) + VIEW_OFFSET_Y
+    (player.stance ?? HECTOR_DEFAULT_STANCE) - (player.crouch ?? 0) + HECTOR_VIEWPORT_HEIGHT + VIEW_OFFSET_Y
   );
 }
 

@@ -28,6 +28,7 @@ export interface InputPacket {
   sequence: number;
   moveForward: number;
   strafe?: number;
+  bodyYawTarget?: number;
   turnBody: number;
   aimYaw: number;
   aimPitch: number;

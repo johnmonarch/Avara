@@ -91,6 +91,7 @@ const HECTOR_LEG_LOW_LENGTH = 1.15;
 const HECTOR_MAX_LEG_LENGTH = 2;
 const HECTOR_LEG_SCAN_HEIGHT = 0.2;
 const HECTOR_CONTACT_HEIGHT = 0.1;
+const HECTOR_IDLE_MOTION_EPSILON = 0.0005;
 const PLAYER_COLLISION_TOP_PADDING = 0.45;
 const PLAYER_COLLISION_SAMPLE_PADDING = 0.12;
 const BOOST_LENGTH_CLASSIC_FRAMES = 16 * 5;
@@ -359,6 +360,7 @@ interface FragmentState {
 interface PlayerInputState {
   moveForward: number;
   strafe: number;
+  bodyYawTarget?: number;
   turnBody: number;
   aimYaw: number;
   aimPitch: number;
@@ -695,6 +697,7 @@ createServer(async (request, response) => {
       const nextInput: PlayerInputState = {
         moveForward: clamp(asNumber(body?.moveForward) ?? 0, -1, 1),
         strafe: clamp(asNumber(body?.strafe) ?? 0, -1, 1),
+        bodyYawTarget: body?.bodyYawTarget === undefined ? undefined : normalizeAngle(asNumber(body?.bodyYawTarget) ?? 0),
         turnBody: clamp(asNumber(body?.turnBody) ?? 0, -1, 1),
         aimYaw: clamp(asNumber(body?.aimYaw) ?? 0, -1.2, 1.2),
         aimPitch: clamp(asNumber(body?.aimPitch) ?? 0, -0.8, 0.5),
@@ -1169,6 +1172,9 @@ function simulateWalkerMotors(room: RoomState, player: PlayerState, fpsScale: nu
   const forwardInput = clamp(player.input.moveForward, -1, 1);
   const turnInput = clamp(player.input.turnBody, -1, 1);
   const strafeInput = clamp(player.input.strafe, -1, 1);
+  const bodyYawTarget = typeof player.input.bodyYawTarget === "number"
+    ? normalizeAngle(player.input.bodyYawTarget)
+    : undefined;
   const leftCommand = clamp(forwardInput + turnInput, -1, 1);
   const rightCommand = clamp(forwardInput - turnInput, -1, 1);
 
@@ -1181,7 +1187,7 @@ function simulateWalkerMotors(room: RoomState, player: PlayerState, fpsScale: nu
   const strafeDistance = player.strafeMotor;
   player.distance = Math.abs(distance) > 0.0001 ? distance : (Math.abs(strafeDistance) > 0.0001 ? strafeDistance : 0);
   player.headChange = Math.abs(headChange) < 0.00005 ? 0 : headChange;
-  const averageHeading = player.bodyYaw + headChange / 2;
+  const averageHeading = bodyYawTarget ?? (player.bodyYaw + headChange / 2);
   const motorDirX = (Math.sin(averageHeading) * distance) + (Math.cos(averageHeading) * strafeDistance);
   const motorDirZ = (Math.cos(averageHeading) * distance) - (Math.sin(averageHeading) * strafeDistance);
   const supportTraction = player.supportTraction;
@@ -1205,7 +1211,7 @@ function simulateWalkerMotors(room: RoomState, player: PlayerState, fpsScale: nu
   player.vy -= slowdown * player.vy;
   player.vz -= slowdown * player.vz;
 
-  player.bodyYaw = normalizeAngle(player.bodyYaw + headChange);
+  player.bodyYaw = bodyYawTarget ?? normalizeAngle(player.bodyYaw + headChange);
 }
 
 function simulateWalkerVertical(room: RoomState, player: PlayerState, fpsScale: number): void {
@@ -1349,6 +1355,15 @@ function updateWalkerLegContacts(room: RoomState, player: PlayerState, fpsScale:
   const legSpeeds = computeWalkerLegSpeeds(player);
   player.absAvgSpeed = Math.abs(legSpeeds[0]) + Math.abs(legSpeeds[1]);
 
+  if (
+    player.absAvgSpeed < HECTOR_IDLE_MOTION_EPSILON
+    && Math.abs(player.distance) < HECTOR_IDLE_MOTION_EPSILON
+    && Math.abs(player.headChange) < HECTOR_IDLE_MOTION_EPSILON
+  ) {
+    stabilizeWalkerIdleLegs(room, player, elevation, headHeight, sinHeading, cosHeading);
+    return;
+  }
+
   const phaseChange = player.absAvgSpeed > 0.000001
     ? (Math.sqrt(player.absAvgSpeed) * 0.91) / Math.max(elevation, 0.000001)
     : 0;
@@ -1409,6 +1424,48 @@ function updateWalkerLegContacts(room: RoomState, player: PlayerState, fpsScale:
     leg.lowAngle = solvedAngles.lowAngle;
 
     legPhase += Math.PI;
+  }
+}
+
+function stabilizeWalkerIdleLegs(
+  room: RoomState,
+  player: PlayerState,
+  elevation: number,
+  headHeight: number,
+  sinHeading: number,
+  cosHeading: number
+): void {
+  player.legPhase = 0;
+
+  for (let index = 0; index < 2; index += 1) {
+    const leg = player.legs[index];
+    const tempX = index === 0 ? HECTOR_LEG_SPACE_ABS : -HECTOR_LEG_SPACE_ABS;
+    const worldX = player.x - (tempX * cosHeading);
+    const worldZ = player.z + (tempX * sinHeading);
+    const footScanHeight = player.y + HECTOR_LEG_SCAN_HEIGHT + (elevation / 2);
+    const contactY = sampleFloorHeight(room, worldX, worldZ, footScanHeight);
+
+    if ((contactY - player.y) < -player.speedLimit) {
+      player.speedLimit = -(contactY - player.y);
+    }
+
+    if (contactY > player.targetHeight) {
+      player.targetHeight = contactY;
+    }
+    if (contactY + HECTOR_CONTACT_HEIGHT >= player.y) {
+      player.tractionFlag = true;
+    }
+
+    leg.x = 0;
+    leg.y = contactY - player.y;
+    leg.touching = true;
+    leg.whereX = worldX;
+    leg.whereY = contactY;
+    leg.whereZ = worldZ;
+
+    const solvedAngles = solveWalkerLegAngles(headHeight, leg);
+    leg.highAngle = solvedAngles.highAngle;
+    leg.lowAngle = solvedAngles.lowAngle;
   }
 }
 
@@ -3434,6 +3491,7 @@ function emptyInput(): PlayerInputState {
   return {
     moveForward: 0,
     strafe: 0,
+    bodyYawTarget: undefined,
     turnBody: 0,
     aimYaw: 0,
     aimPitch: 0,

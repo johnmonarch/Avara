@@ -294,6 +294,36 @@ a {
   pointer-events: none;
 }
 
+.direction-pointer {
+  position: absolute;
+  left: 50%;
+  top: 18%;
+  width: 0;
+  height: 0;
+  transform: translateX(-50%);
+}
+
+.direction-pointer::before,
+.direction-pointer::after {
+  content: "";
+  position: absolute;
+  width: 4px;
+  height: 108px;
+  background: #050505;
+  transform-origin: bottom center;
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.14);
+}
+
+.direction-pointer::before {
+  left: -2px;
+  transform: rotate(28deg);
+}
+
+.direction-pointer::after {
+  left: -2px;
+  transform: rotate(-28deg);
+}
+
 .reticle-bracket::before,
 .reticle-bracket::after,
 .reticle-bracket span {

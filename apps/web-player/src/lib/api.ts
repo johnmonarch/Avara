@@ -22,6 +22,7 @@ const adSessionStorageKey = "avara-web-player-ad-session";
 export interface PrototypeInputState {
   moveForward: number;
   strafe: number;
+  bodyYawTarget?: number;
   turnBody: number;
   aimYaw: number;
   aimPitch: number;
