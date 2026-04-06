@@ -1318,8 +1318,6 @@ function updatePlayerMarker(object: THREE.Object3D, player: SnapshotPlayerState)
 function createWalkerAssemblyMarker(player: SnapshotPlayerState, isLocal: boolean): THREE.Group {
   const root = new THREE.Group();
   root.userData.playerVisualKind = "walker";
-  root.userData.walkerPhase = 0;
-  root.userData.walkerPhaseAt = performance.now();
   root.userData.baseYawOffset = BSP_FORWARD_YAW_OFFSET;
   root.rotation.order = "YXZ";
 
@@ -1330,32 +1328,33 @@ function createWalkerAssemblyMarker(player: SnapshotPlayerState, isLocal: boolea
 
   const hullPivot = new THREE.Group();
   hullPivot.name = "walker-hull";
+  hullPivot.matrixAutoUpdate = false;
   rig.add(hullPivot);
   attachBspRenderable(hullPivot, player.shapeAssetUrl ?? LIVE_ASSET_URLS.hector, palette);
 
   const leftUpper = new THREE.Group();
   leftUpper.name = "walker-left-upper";
+  leftUpper.matrixAutoUpdate = false;
   rig.add(leftUpper);
   attachBspRenderable(leftUpper, LIVE_ASSET_URLS.hectorLegHigh, palette);
 
   const rightUpper = new THREE.Group();
   rightUpper.name = "walker-right-upper";
+  rightUpper.matrixAutoUpdate = false;
   rig.add(rightUpper);
-  attachBspRenderable(rightUpper, LIVE_ASSET_URLS.hectorLegHigh, palette, {
-    preRotateY: Math.PI
-  });
+  attachBspRenderable(rightUpper, LIVE_ASSET_URLS.hectorLegHigh, palette);
 
-    const leftLower = new THREE.Group();
-    leftLower.name = "walker-left-lower";
-    leftUpper.add(leftLower);
-    attachBspRenderable(leftLower, LIVE_ASSET_URLS.hectorLegLow, palette);
+  const leftLower = new THREE.Group();
+  leftLower.name = "walker-left-lower";
+  leftLower.matrixAutoUpdate = false;
+  rig.add(leftLower);
+  attachBspRenderable(leftLower, LIVE_ASSET_URLS.hectorLegLow, palette);
 
   const rightLower = new THREE.Group();
   rightLower.name = "walker-right-lower";
-    rightUpper.add(rightLower);
-    attachBspRenderable(rightLower, LIVE_ASSET_URLS.hectorLegLow, palette, {
-      preRotateY: Math.PI
-    });
+  rightLower.matrixAutoUpdate = false;
+  rig.add(rightLower);
+  attachBspRenderable(rightLower, LIVE_ASSET_URLS.hectorLegLow, palette);
 
   const loadedMissile = new THREE.Group();
   loadedMissile.name = "walker-loaded-missile";
@@ -1382,24 +1381,26 @@ function createWalkerAssemblyMarker(player: SnapshotPlayerState, isLocal: boolea
 }
 
 function updateWalkerAssemblyPose(root: THREE.Group, player: SnapshotPlayerState): void {
-  const now = performance.now();
-  const previousSample = typeof root.userData.walkerPhaseAt === "number" ? root.userData.walkerPhaseAt : now;
-  const elapsedSeconds = Math.min(0.05, Math.max(0.001, (now - previousSample) / 1000));
-  root.userData.walkerPhaseAt = now;
-
-  const leftMotor = player.leftMotor ?? 0;
-  const rightMotor = player.rightMotor ?? 0;
   const elevation = player.stance ?? HECTOR_DEFAULT_STANCE;
   const crouch = player.crouch ?? 0;
   const headHeight = Math.max(0.95, elevation - crouch);
   const yawDelta = normalizeAngle(player.turretYaw - player.bodyYaw);
   const rideHeight = player.rideHeight ?? HECTOR_DEFAULT_RIDE_HEIGHT;
+  const rig = root.getObjectByName("walker-rig");
+  if (rig) {
+    rig.position.set(0, headHeight, 0);
+  }
 
   const hull = root.getObjectByName("walker-hull");
   if (hull) {
-    hull.position.set(0, headHeight + rideHeight, 0);
-    hull.rotation.order = "ZXY";
-    hull.rotation.set(player.turretPitch, yawDelta, -yawDelta / 6);
+    applyNativeWalkerPartMatrix(
+      hull,
+      buildNativeHullMatrix({
+        rideHeight,
+        viewYaw: yawDelta,
+        viewPitch: player.turretPitch
+      })
+    );
   }
 
   const loadedMissile = root.getObjectByName("walker-loaded-missile");
@@ -1420,34 +1421,152 @@ function updateWalkerAssemblyPose(root: THREE.Group, player: SnapshotPlayerState
 
   const leftUpper = root.getObjectByName("walker-left-upper");
   if (leftUpper) {
-    leftUpper.position.set(HECTOR_LEG_SPACE, headHeight, 0);
-    leftUpper.rotation.set(-leftPose.upperAngle, 0, 0);
+    applyNativeWalkerPartMatrix(leftUpper, buildNativeUpperLegMatrix(leftPose.upperAngle, false));
   }
 
   const rightUpper = root.getObjectByName("walker-right-upper");
   if (rightUpper) {
-    rightUpper.position.set(-HECTOR_LEG_SPACE, headHeight, 0);
-    rightUpper.rotation.set(-rightPose.upperAngle, 0, 0);
+    applyNativeWalkerPartMatrix(rightUpper, buildNativeUpperLegMatrix(rightPose.upperAngle, true));
   }
 
   const leftLower = root.getObjectByName("walker-left-lower");
   if (leftLower) {
-    leftLower.position.set(0, -HECTOR_LEG_HIGH_LENGTH, 0);
-    leftLower.rotation.set(-leftPose.lowerAngle, 0, 0);
+    applyNativeWalkerPartMatrix(leftLower, buildNativeLowerLegMatrix(leftPose.upperAngle, leftPose.lowerAngle, false));
   }
 
   const rightLower = root.getObjectByName("walker-right-lower");
   if (rightLower) {
-    rightLower.position.set(0, -HECTOR_LEG_HIGH_LENGTH, 0);
-    rightLower.rotation.set(-rightPose.lowerAngle, 0, 0);
+    applyNativeWalkerPartMatrix(rightLower, buildNativeLowerLegMatrix(rightPose.upperAngle, rightPose.lowerAngle, true));
   }
+}
+
+type NativeMatrix = [
+  [number, number, number, number],
+  [number, number, number, number],
+  [number, number, number, number],
+  [number, number, number, number]
+];
+
+function createNativeIdentityMatrix(): NativeMatrix {
+  return [
+    [1, 0, 0, 0],
+    [0, 1, 0, 0],
+    [0, 0, 1, 0],
+    [0, 0, 0, 1]
+  ];
+}
+
+function nativeInitialRotateX(matrix: NativeMatrix, angle: number): void {
+  const sine = Math.sin(angle);
+  const cosine = Math.cos(angle);
+  matrix[1][1] = cosine;
+  matrix[1][2] = sine;
+  matrix[2][1] = -sine;
+  matrix[2][2] = cosine;
+}
+
+function nativeInitialRotateY(matrix: NativeMatrix, angle: number): void {
+  const sine = Math.sin(angle);
+  const cosine = Math.cos(angle);
+  matrix[0][0] = cosine;
+  matrix[0][2] = -sine;
+  matrix[2][0] = sine;
+  matrix[2][2] = cosine;
+}
+
+function nativeInitialRotateZ(matrix: NativeMatrix, angle: number): void {
+  const sine = Math.sin(angle);
+  const cosine = Math.cos(angle);
+  matrix[0][0] = cosine;
+  matrix[0][1] = sine;
+  matrix[1][0] = -sine;
+  matrix[1][1] = cosine;
+}
+
+function nativeRotateX(matrix: NativeMatrix, angle: number): void {
+  const sine = Math.sin(angle);
+  const cosine = Math.cos(angle);
+  for (let index = 0; index < 4; index += 1) {
+    const value = matrix[index][1];
+    matrix[index][1] = (value * cosine) - (matrix[index][2] * sine);
+    matrix[index][2] = (value * sine) + (matrix[index][2] * cosine);
+  }
+}
+
+function nativeRotateY(matrix: NativeMatrix, angle: number): void {
+  const sine = Math.sin(angle);
+  const cosine = Math.cos(angle);
+  for (let index = 0; index < 4; index += 1) {
+    const value = matrix[index][0];
+    matrix[index][0] = (value * cosine) + (matrix[index][2] * sine);
+    matrix[index][2] = (matrix[index][2] * cosine) - (value * sine);
+  }
+}
+
+function nativeTranslateX(matrix: NativeMatrix, delta: number): void {
+  matrix[3][0] += delta;
+}
+
+function nativeTranslateY(matrix: NativeMatrix, delta: number): void {
+  matrix[3][1] += delta;
+}
+
+function nativePreFlipY(matrix: NativeMatrix): void {
+  for (const row of [0, 2] as const) {
+    matrix[row][0] = -matrix[row][0];
+    matrix[row][1] = -matrix[row][1];
+    matrix[row][2] = -matrix[row][2];
+  }
+}
+
+function buildNativeHullMatrix(input: { rideHeight: number; viewYaw: number; viewPitch: number }): NativeMatrix {
+  const matrix = createNativeIdentityMatrix();
+  nativeInitialRotateZ(matrix, input.viewYaw / -6);
+  nativeRotateX(matrix, input.viewPitch);
+  nativeRotateY(matrix, input.viewYaw);
+  nativeTranslateY(matrix, input.rideHeight);
+  return matrix;
+}
+
+function buildNativeUpperLegMatrix(highAngle: number, mirrored: boolean): NativeMatrix {
+  const matrix = createNativeIdentityMatrix();
+  nativeInitialRotateX(matrix, highAngle);
+  if (mirrored) {
+    nativePreFlipY(matrix);
+    nativeTranslateX(matrix, -HECTOR_LEG_SPACE);
+  } else {
+    nativeTranslateX(matrix, HECTOR_LEG_SPACE);
+  }
+  return matrix;
+}
+
+function buildNativeLowerLegMatrix(highAngle: number, lowAngle: number, mirrored: boolean): NativeMatrix {
+  const matrix = createNativeIdentityMatrix();
+  nativeInitialRotateX(matrix, lowAngle);
+  if (mirrored) {
+    nativePreFlipY(matrix);
+  }
+  nativeTranslateY(matrix, -HECTOR_LEG_HIGH_LENGTH);
+  nativeRotateX(matrix, highAngle);
+  nativeTranslateX(matrix, mirrored ? -HECTOR_LEG_SPACE : HECTOR_LEG_SPACE);
+  return matrix;
+}
+
+function applyNativeWalkerPartMatrix(target: THREE.Object3D, matrix: NativeMatrix): void {
+  target.matrixAutoUpdate = false;
+  target.matrix.set(
+    matrix[0][0], matrix[1][0], matrix[2][0], matrix[3][0],
+    matrix[0][1], matrix[1][1], matrix[2][1], matrix[3][1],
+    matrix[0][2], matrix[1][2], matrix[2][2], matrix[3][2],
+    matrix[0][3], matrix[1][3], matrix[2][3], matrix[3][3]
+  );
+  target.matrixWorldNeedsUpdate = true;
 }
 
 function createFirstPersonCockpitRig(): THREE.Group {
   const root = new THREE.Group();
   root.name = "first-person-cockpit";
   root.visible = false;
-  root.rotation.y = BSP_FORWARD_YAW_OFFSET;
 
   const hullAnchor = new THREE.Group();
   hullAnchor.name = "first-person-hull-anchor";
@@ -1466,20 +1585,20 @@ function createFirstPersonCockpitRig(): THREE.Group {
     fallback: "#7a5c25"
   };
   syncBspRenderable(hull, LIVE_ASSET_URLS.hectorHead, hullPalette);
+  hull.visible = false;
 
   const gunsRig = new THREE.Group();
   gunsRig.name = "first-person-guns";
-  gunsRig.rotation.y = -BSP_FORWARD_YAW_OFFSET;
   hullAnchor.add(gunsRig);
 
   const leftGun = createFirstPersonGunMesh("left");
   leftGun.name = "first-person-left-gun";
-  leftGun.position.set(-GUN_MOUNT_OFFSET_X, -0.16, -0.82);
+  leftGun.position.set(-0.28, -0.18, -0.86);
   gunsRig.add(leftGun);
 
   const rightGun = createFirstPersonGunMesh("right");
   rightGun.name = "first-person-right-gun";
-  rightGun.position.set(GUN_MOUNT_OFFSET_X, -0.16, -0.82);
+  rightGun.position.set(0.28, -0.18, -0.86);
   gunsRig.add(rightGun);
 
   const loadedMissile = new THREE.Group();
@@ -1555,6 +1674,7 @@ function updateFirstPersonCockpitRig(
   const hullVisual = root.getObjectByName("first-person-hull");
   if (hullVisual instanceof THREE.Group) {
     syncBspRenderable(hullVisual, LIVE_ASSET_URLS.hectorHead, hullPalette);
+    hullVisual.visible = false;
   }
 
   const hullAnchor = root.getObjectByName("first-person-hull-anchor");
