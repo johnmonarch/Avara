@@ -297,7 +297,7 @@ a {
 .direction-pointer {
   position: absolute;
   left: 50%;
-  top: 18%;
+  top: 14%;
   width: 0;
   height: 0;
   transform: translateX(-50%);
@@ -307,8 +307,8 @@ a {
 .direction-pointer::after {
   content: "";
   position: absolute;
-  width: 4px;
-  height: 108px;
+  width: 3px;
+  height: 72px;
   background: #050505;
   transform-origin: bottom center;
   box-shadow: 0 0 2px rgba(0, 0, 0, 0.14);
@@ -380,11 +380,11 @@ a {
 
 .combat-hud {
   position: absolute;
-  left: 16px;
-  bottom: 18px;
+  left: 8px;
+  bottom: 8px;
   display: grid;
-  grid-template-columns: minmax(220px, 280px) minmax(180px, 220px);
-  gap: 14px;
+  grid-template-columns: minmax(122px, 142px) minmax(92px, 112px);
+  gap: 8px;
 }
 
 .hud-panel,
@@ -396,8 +396,9 @@ a {
 }
 
 .hud-panel {
-  padding: 14px 16px;
-  border-radius: 18px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  font-size: 0.78rem;
 }
 
 .hud-row,
@@ -426,9 +427,9 @@ a {
 }
 
 .ammo-strip {
-  margin-bottom: 10px;
+  margin-bottom: 6px;
   color: var(--muted);
-  font-size: 0.92rem;
+  font-size: 0.72rem;
 }
 
 .heading-indicator {

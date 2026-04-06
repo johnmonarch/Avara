@@ -1175,6 +1175,7 @@ function simulateWalkerMotors(room: RoomState, player: PlayerState, fpsScale: nu
   const bodyYawTarget = typeof player.input.bodyYawTarget === "number"
     ? normalizeAngle(player.input.bodyYawTarget)
     : undefined;
+  const targetHeadingDelta = bodyYawTarget === undefined ? 0 : normalizeAngle(bodyYawTarget - player.bodyYaw);
   const leftCommand = clamp(forwardInput + turnInput, -1, 1);
   const rightCommand = clamp(forwardInput - turnInput, -1, 1);
 
@@ -1183,11 +1184,15 @@ function simulateWalkerMotors(room: RoomState, player: PlayerState, fpsScale: nu
   player.strafeMotor = applyMotorCommand(player.strafeMotor, strafeInput);
 
   const distance = (player.leftMotor + player.rightMotor) / 2;
-  const headChange = fpsCoefficient2((player.rightMotor - player.leftMotor) * HECTOR_TURNING_EFFECT, fpsScale);
+  const analogHeadChange = fpsCoefficient2((player.rightMotor - player.leftMotor) * HECTOR_TURNING_EFFECT, fpsScale);
   const strafeDistance = player.strafeMotor;
+  const modernizedMoving = Math.abs(distance) > 0.0001 || Math.abs(strafeDistance) > 0.0001;
+  const headChange = bodyYawTarget === undefined
+    ? analogHeadChange
+    : (modernizedMoving ? targetHeadingDelta : 0);
   player.distance = Math.abs(distance) > 0.0001 ? distance : (Math.abs(strafeDistance) > 0.0001 ? strafeDistance : 0);
   player.headChange = Math.abs(headChange) < 0.00005 ? 0 : headChange;
-  const averageHeading = bodyYawTarget ?? (player.bodyYaw + headChange / 2);
+  const averageHeading = bodyYawTarget ?? (player.bodyYaw + analogHeadChange / 2);
   const motorDirX = (Math.sin(averageHeading) * distance) + (Math.cos(averageHeading) * strafeDistance);
   const motorDirZ = (Math.cos(averageHeading) * distance) - (Math.sin(averageHeading) * strafeDistance);
   const supportTraction = player.supportTraction;
@@ -1211,7 +1216,7 @@ function simulateWalkerMotors(room: RoomState, player: PlayerState, fpsScale: nu
   player.vy -= slowdown * player.vy;
   player.vz -= slowdown * player.vz;
 
-  player.bodyYaw = bodyYawTarget ?? normalizeAngle(player.bodyYaw + headChange);
+  player.bodyYaw = bodyYawTarget ?? normalizeAngle(player.bodyYaw + analogHeadChange);
 }
 
 function simulateWalkerVertical(room: RoomState, player: PlayerState, fpsScale: number): void {
