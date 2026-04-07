@@ -1402,25 +1402,33 @@ function createWalkerAssemblyMarker(player: SnapshotPlayerState, isLocal: boolea
   leftUpper.name = "walker-left-upper";
   leftUpper.matrixAutoUpdate = false;
   rig.add(leftUpper);
-  attachBspRenderable(leftUpper, LIVE_ASSET_URLS.hectorLegHigh, palette);
+  attachBspRenderable(leftUpper, LIVE_ASSET_URLS.hectorLegHigh, palette, {
+    preRotateY: BSP_FORWARD_YAW_OFFSET
+  });
 
   const rightUpper = new THREE.Group();
   rightUpper.name = "walker-right-upper";
   rightUpper.matrixAutoUpdate = false;
   rig.add(rightUpper);
-  attachBspRenderable(rightUpper, LIVE_ASSET_URLS.hectorLegHigh, palette);
+  attachBspRenderable(rightUpper, LIVE_ASSET_URLS.hectorLegHigh, palette, {
+    preRotateY: BSP_FORWARD_YAW_OFFSET
+  });
 
   const leftLower = new THREE.Group();
   leftLower.name = "walker-left-lower";
   leftLower.matrixAutoUpdate = false;
   rig.add(leftLower);
-  attachBspRenderable(leftLower, LIVE_ASSET_URLS.hectorLegLow, palette);
+  attachBspRenderable(leftLower, LIVE_ASSET_URLS.hectorLegLow, palette, {
+    preRotateY: BSP_FORWARD_YAW_OFFSET
+  });
 
   const rightLower = new THREE.Group();
   rightLower.name = "walker-right-lower";
   rightLower.matrixAutoUpdate = false;
   rig.add(rightLower);
-  attachBspRenderable(rightLower, LIVE_ASSET_URLS.hectorLegLow, palette);
+  attachBspRenderable(rightLower, LIVE_ASSET_URLS.hectorLegLow, palette, {
+    preRotateY: BSP_FORWARD_YAW_OFFSET
+  });
 
   const loadedMissile = new THREE.Group();
   loadedMissile.name = "walker-loaded-missile";
