@@ -1685,20 +1685,58 @@ function playerHitsCollisionMesh(
         z: end.z + offset.z
       };
 
-      if (nativeCoreAvailable && room.collisionTriangleBuffer.length) {
-        if (findSegmentImpactNative(room.collisionTriangleBuffer, sampleStart, sampleEnd, 0)) {
-          return true;
-        }
-        continue;
-      }
-
-      if (findCollisionMeshImpact(room, sampleStart, sampleEnd, 0)) {
+      if (findPlayerMovementCollisionMeshImpact(room, sampleStart, sampleEnd)) {
         return true;
       }
     }
   }
 
   return false;
+}
+
+function findPlayerMovementCollisionMeshImpact(
+  room: RoomState,
+  start: Vec3,
+  end: Vec3
+): { t: number; point: Vec3 } | null {
+  let best: { t: number; point: Vec3 } | null = null;
+  const segmentBounds = pointPairBounds(start, end);
+  const maxWalkableSideTopY = Math.min(start.y, end.y) + MAX_STEP_HEIGHT + 0.05;
+
+  for (const mesh of room.collisionMeshes) {
+    if (!aabbOverlaps(segmentBounds, mesh.bounds)) {
+      continue;
+    }
+
+    for (const triangle of mesh.triangles) {
+      if (!aabbOverlaps(segmentBounds, triangle.bounds)) {
+        continue;
+      }
+
+      const normal = triangleNormal(triangle);
+
+      // Let the floor sampler handle low deck caps and platform lips. For player
+      // movement these should behave like step-up / step-off surfaces, not like
+      // invisible vertical walls that pin the walker at the ledge.
+      if (normal.y < 0.2 && triangle.bounds.maxY <= maxWalkableSideTopY) {
+        continue;
+      }
+
+      const t = segmentTriangleIntersectionT(start, end, triangle.a, triangle.b, triangle.c);
+      if (t === null) {
+        continue;
+      }
+
+      if (!best || t < best.t) {
+        best = {
+          t,
+          point: lerpPoint3(start, end, t)
+        };
+      }
+    }
+  }
+
+  return best;
 }
 
 function getPlayerCollisionHeight(player: PlayerState): number {
