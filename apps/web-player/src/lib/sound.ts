@@ -44,6 +44,8 @@ class AvaraSoundRuntime {
   private scene: LevelScene | null = null;
   private ambientTracks = new Map<string, HTMLAudioElement>();
   private projectileLoops = new Map<string, ProjectileLoop>();
+  private oneShotPools = new Map<string, HTMLAudioElement[]>();
+  private oneShotThrottle = new Map<string, number>();
   private processedEventIds = new Set<string>();
   private previousSnapshot: SnapshotPacket | null = null;
 
@@ -86,6 +88,13 @@ class AvaraSoundRuntime {
       safeStop(audio);
     }
     this.ambientTracks.clear();
+    for (const pool of this.oneShotPools.values()) {
+      for (const audio of pool) {
+        safeStop(audio);
+      }
+    }
+    this.oneShotPools.clear();
+    this.oneShotThrottle.clear();
     this.previousSnapshot = null;
   }
 
@@ -208,7 +217,9 @@ class AvaraSoundRuntime {
         this.playOneShot(
           groundStepSoundId,
           groundStepSoundUrl,
-          spatialVolume(localPlayer, { x: leg.whereX, y: leg.whereY, z: leg.whereZ }, clamp(0.12 + impact * 0.22, 0.08, 0.42))
+          spatialVolume(localPlayer, { x: leg.whereX, y: leg.whereY, z: leg.whereZ }, clamp(0.12 + impact * 0.22, 0.08, 0.42)),
+          `step:${player.id}:${index}`,
+          110
         );
       }
     }
@@ -292,14 +303,53 @@ class AvaraSoundRuntime {
     this.projectileLoops.clear();
   }
 
-  private playOneShot(soundId: number, assetUrl: string | undefined, volume: number): void {
+  private playOneShot(
+    soundId: number,
+    assetUrl: string | undefined,
+    volume: number,
+    throttleKey?: string,
+    throttleMs = 0
+  ): void {
     if (!this.unlocked || volume <= 0.001) {
       return;
     }
 
-    const audio = new Audio(resolveSoundUrl(soundId, assetUrl));
-    audio.preload = "auto";
+    const now = performance.now();
+    if (throttleKey) {
+      const previous = this.oneShotThrottle.get(throttleKey) ?? 0;
+      if ((now - previous) < throttleMs) {
+        return;
+      }
+      this.oneShotThrottle.set(throttleKey, now);
+      if (this.oneShotThrottle.size > 256) {
+        const retained = Array.from(this.oneShotThrottle.entries()).slice(-128);
+        this.oneShotThrottle = new Map(retained);
+      }
+    }
+
+    const poolKey = `${soundId}:${assetUrl ?? "builtin"}`;
+    let pool = this.oneShotPools.get(poolKey);
+    if (!pool) {
+      pool = [];
+      this.oneShotPools.set(poolKey, pool);
+    }
+
+    let audio = pool.find((candidate) => candidate.paused || candidate.ended);
+    if (!audio) {
+      if (pool.length >= 6) {
+        return;
+      }
+      audio = new Audio(resolveSoundUrl(soundId, assetUrl));
+      audio.preload = "auto";
+      pool.push(audio);
+    }
+
     audio.volume = clamp(volume, 0, 1);
+    try {
+      audio.currentTime = 0;
+    } catch {
+      return;
+    }
     void safePlay(audio);
   }
 }
