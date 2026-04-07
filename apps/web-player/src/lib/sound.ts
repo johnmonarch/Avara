@@ -223,7 +223,7 @@ class AvaraSoundRuntime {
           groundStepSoundUrl,
           spatialVolume(localPlayer, { x: leg.whereX, y: leg.whereY, z: leg.whereZ }, clamp(0.08 + impact * 0.14, 0.06, 0.28)),
           `step:${player.id}:${index}`,
-          220
+          160
         );
       }
     }
