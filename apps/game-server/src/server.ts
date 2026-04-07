@@ -1187,9 +1187,7 @@ function simulateWalkerMotors(room: RoomState, player: PlayerState, fpsScale: nu
   const analogHeadChange = fpsCoefficient2((player.rightMotor - player.leftMotor) * HECTOR_TURNING_EFFECT, fpsScale);
   const strafeDistance = player.strafeMotor;
   const modernizedMoving = Math.abs(distance) > 0.0001 || Math.abs(strafeDistance) > 0.0001;
-  const headChange = bodyYawTarget === undefined
-    ? analogHeadChange
-    : (modernizedMoving ? targetHeadingDelta : 0);
+  const headChange = bodyYawTarget === undefined ? analogHeadChange : 0;
   player.distance = Math.abs(distance) > 0.0001 ? distance : (Math.abs(strafeDistance) > 0.0001 ? strafeDistance : 0);
   player.headChange = Math.abs(headChange) < 0.00005 ? 0 : headChange;
   const averageHeading = bodyYawTarget ?? (player.bodyYaw + analogHeadChange / 2);

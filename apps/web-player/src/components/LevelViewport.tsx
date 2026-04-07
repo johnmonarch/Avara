@@ -91,6 +91,7 @@ const SMART_MISSILE_MOUNT_OFFSET = { x: 0, y: 0.45, z: 0.6 };
 const GRENADE_MOUNT_OFFSET = { x: 0, y: -0.2, z: 0.95 };
 const SMART_MISSILE_TARGET_RANGE = 160;
 const BSP_FORWARD_YAW_OFFSET = -Math.PI / 2;
+const BSP_LEG_REST_X_OFFSET = -Math.PI / 2;
 const FIRST_PERSON_LEFT_GUN_OFFSET = { x: -0.7, y: -0.52, z: -0.78 };
 const FIRST_PERSON_RIGHT_GUN_OFFSET = { x: 0.7, y: -0.52, z: -0.78 };
 const FIRST_PERSON_SMART_MISSILE_MOUNT_OFFSET = { x: 0, y: -0.08, z: -0.96 };
@@ -1402,25 +1403,33 @@ function createWalkerAssemblyMarker(player: SnapshotPlayerState, isLocal: boolea
   leftUpper.name = "walker-left-upper";
   leftUpper.matrixAutoUpdate = false;
   rig.add(leftUpper);
-  attachBspRenderable(leftUpper, LIVE_ASSET_URLS.hectorLegHigh, palette);
+  attachBspRenderable(leftUpper, LIVE_ASSET_URLS.hectorLegHigh, palette, {
+    preRotateX: BSP_LEG_REST_X_OFFSET
+  });
 
   const rightUpper = new THREE.Group();
   rightUpper.name = "walker-right-upper";
   rightUpper.matrixAutoUpdate = false;
   rig.add(rightUpper);
-  attachBspRenderable(rightUpper, LIVE_ASSET_URLS.hectorLegHigh, palette);
+  attachBspRenderable(rightUpper, LIVE_ASSET_URLS.hectorLegHigh, palette, {
+    preRotateX: BSP_LEG_REST_X_OFFSET
+  });
 
   const leftLower = new THREE.Group();
   leftLower.name = "walker-left-lower";
   leftLower.matrixAutoUpdate = false;
   rig.add(leftLower);
-  attachBspRenderable(leftLower, LIVE_ASSET_URLS.hectorLegLow, palette);
+  attachBspRenderable(leftLower, LIVE_ASSET_URLS.hectorLegLow, palette, {
+    preRotateX: BSP_LEG_REST_X_OFFSET
+  });
 
   const rightLower = new THREE.Group();
   rightLower.name = "walker-right-lower";
   rightLower.matrixAutoUpdate = false;
   rig.add(rightLower);
-  attachBspRenderable(rightLower, LIVE_ASSET_URLS.hectorLegLow, palette);
+  attachBspRenderable(rightLower, LIVE_ASSET_URLS.hectorLegLow, palette, {
+    preRotateX: BSP_LEG_REST_X_OFFSET
+  });
 
   const loadedMissile = new THREE.Group();
   loadedMissile.name = "walker-loaded-missile";
@@ -1753,7 +1762,7 @@ function syncBspRenderable(
   root: THREE.Group,
   url: string,
   palette: MarkerPalette,
-  options?: { preRotateY?: number }
+  options?: { preRotateX?: number; preRotateY?: number }
 ): void {
   if (root.userData.renderableUrl === url) {
     return;
@@ -1785,9 +1794,12 @@ function syncBspRenderable(
 function buildPaletteRenderableGroup(
   renderable: BspRenderableData,
   palette: MarkerPalette,
-  options?: { preRotateY?: number }
+  options?: { preRotateX?: number; preRotateY?: number }
 ): THREE.Group {
   const group = new THREE.Group();
+  if (options?.preRotateX) {
+    group.rotation.x = options.preRotateX;
+  }
   if (options?.preRotateY) {
     group.rotation.y = options.preRotateY;
   }
@@ -1913,7 +1925,7 @@ function attachBspRenderable(
   root: THREE.Group,
   url: string,
   palette: MarkerPalette,
-  options?: { preRotateY?: number }
+  options?: { preRotateX?: number; preRotateY?: number }
 ): void {
   void loadBspRenderable(url)
     .then((renderable) => {
@@ -1926,11 +1938,14 @@ function attachBspMesh(
   root: THREE.Group,
   url: string,
   material: THREE.MeshStandardMaterial,
-  options?: { preRotateY?: number }
+  options?: { preRotateX?: number; preRotateY?: number }
 ): void {
   void loadBspGeometry(url)
     .then((geometry) => {
       const mesh = new THREE.Mesh(geometry, material);
+      if (options?.preRotateX) {
+        mesh.rotation.x = options.preRotateX;
+      }
       if (options?.preRotateY) {
         mesh.rotation.y = options.preRotateY;
       }
