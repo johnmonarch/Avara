@@ -98,6 +98,20 @@ const FIRST_PERSON_GRENADE_MOUNT_OFFSET = { x: 0, y: -0.16, z: -0.9 };
 const PLAYER_PLASMA_RANGE = 150;
 const PLAYER_PLASMA_FALLBACK_RANGE = PLAYER_PLASMA_RANGE / 4;
 const RETICLE_DISTANCE_OFFSET = 0.1;
+const RETICLE_UPDATE_INTERVAL_MS = 33;
+const SHARED_LERP_TARGET = new THREE.Vector3();
+const SHARED_FORWARD_VECTOR = new THREE.Vector3();
+const SHARED_RIGHT_VECTOR = new THREE.Vector3();
+const SHARED_UP_VECTOR = new THREE.Vector3();
+const SHARED_PROJECTED_POINT = new THREE.Vector3();
+const SHARED_RAY_ORIGIN = new THREE.Vector3();
+const SHARED_TARGET_POINT = new THREE.Vector3();
+const SHARED_FORWARD_AXIS = new THREE.Vector3(0, 0, 1);
+const SHARED_ROLL_AXIS = new THREE.Vector3(0, 0, 1);
+const SHARED_TARGET_QUATERNION = new THREE.Quaternion();
+const SHARED_ROLL_QUATERNION = new THREE.Quaternion();
+const SHARED_RETICLE_RAYCASTER = new THREE.Raycaster();
+const SHARED_RETICLE_HITS: THREE.Intersection[] = [];
 
 export default function LevelViewport({
   scene,
@@ -289,6 +303,10 @@ export default function LevelViewport({
 
     let cancelled = false;
     let animationHandle = 0;
+    let lastReticleUpdateAt = 0;
+    const scratchScoutOrigin = new THREE.Vector3();
+    const scratchCameraOrigin = new THREE.Vector3();
+    const scratchViewDirection = new THREE.Vector3();
 
     const profile = getRenderProfile(playerSettings.graphicsQuality);
     let renderer: THREE.WebGLRenderer;
@@ -307,7 +325,7 @@ export default function LevelViewport({
       return;
     }
 
-    const pixelRatio = Math.min(window.devicePixelRatio || 1, profile.pixelRatioCap);
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, getBrowserPixelRatioCap(profile.pixelRatioCap));
     renderer.setPixelRatio(pixelRatio);
     renderer.setSize(mount.clientWidth, mount.clientHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -493,7 +511,7 @@ export default function LevelViewport({
       if (scoutViewActive && liveLocalPlayer && liveLocalScout) {
         const scoutOrigin = localScoutObject
           ? localScoutObject.position
-          : new THREE.Vector3(liveLocalScout.x, liveLocalScout.y, liveLocalScout.z);
+          : scratchScoutOrigin.set(liveLocalScout.x, liveLocalScout.y, liveLocalScout.z);
         camera.position.set(
           scoutOrigin.x + SCOUT_CAMERA_OFFSET,
           scoutOrigin.y + SCOUT_CAMERA_OFFSET,
@@ -505,17 +523,18 @@ export default function LevelViewport({
           focus.z
         );
       } else if (liveLocalPlayer?.alive) {
-        const cameraOrigin = new THREE.Vector3(
+        const cameraOrigin = scratchCameraOrigin.set(
           focus.x,
           focus.y + getPlayerCameraOriginHeight(liveLocalPlayer),
           focus.z
         );
         const viewDirection = directionFromYawPitch(heading.current.yaw, heading.current.pitch);
+        scratchViewDirection.set(viewDirection.x, viewDirection.y, viewDirection.z);
         camera.position.copy(cameraOrigin);
         camera.lookAt(
-          cameraOrigin.x + viewDirection.x * 12,
-          cameraOrigin.y + viewDirection.y * 12,
-          cameraOrigin.z + viewDirection.z * 12
+          cameraOrigin.x + scratchViewDirection.x * 12,
+          cameraOrigin.y + scratchViewDirection.y * 12,
+          cameraOrigin.z + scratchViewDirection.z * 12
         );
       } else {
         const chaseDistance = liveLocalPlayer?.alive ? 7.25 : 20;
@@ -535,19 +554,22 @@ export default function LevelViewport({
 
       renderer.render(threeScene, camera);
 
-      updateCannonReticleOverlay(
-        reticleRootRef.current,
-        leftReticleRef.current,
-        rightReticleRef.current,
-        mount,
-        camera,
-        sceneRoot,
-        playerLayer,
-        heading.current.yaw,
-        heading.current.pitch,
-        liveLocalPlayer,
-        localPlayerIdRef.current
-      );
+      if (!liveLocalPlayer || liveLocalPlayer.weaponLoad !== "cannon" || (now - lastReticleUpdateAt) >= RETICLE_UPDATE_INTERVAL_MS) {
+        lastReticleUpdateAt = now;
+        updateCannonReticleOverlay(
+          reticleRootRef.current,
+          leftReticleRef.current,
+          rightReticleRef.current,
+          mount,
+          camera,
+          sceneRoot,
+          playerLayer,
+          heading.current.yaw,
+          heading.current.pitch,
+          liveLocalPlayer,
+          localPlayerIdRef.current
+        );
+      }
 
       framesSinceSample += 1;
       if (now - sampleStart >= 500) {
@@ -789,6 +811,17 @@ function getRenderProfile(quality: GraphicsQuality): { antialias: boolean; pixel
         fogFar: 320
       };
   }
+}
+
+function getBrowserPixelRatioCap(pixelRatioCap: number): number {
+  if (typeof navigator !== "undefined") {
+    const agent = navigator.userAgent;
+    const isSafari = /Safari/i.test(agent) && !/(Chrome|Chromium|Edg|OPR|CriOS|FxiOS)/i.test(agent);
+    if (isSafari) {
+      return Math.min(pixelRatioCap, 1.25);
+    }
+  }
+  return pixelRatioCap;
 }
 
 async function populateScene(root: THREE.Group, nodes: SceneNode[]): Promise<number> {
@@ -1052,7 +1085,10 @@ function syncPlayerMeshes(
 
     object.visible = player.alive;
     object.userData.transformResponsiveness = player.id === localPlayerId ? 0.82 : 0.9;
-    queueObjectTransform(object, player.x, player.y, player.z, player.bodyYaw);
+    const visualYaw = object.userData.playerVisualKind === "walker"
+      ? simulationYawToViewYaw(player.bodyYaw)
+      : player.bodyYaw;
+    queueObjectTransform(object, player.x, player.y, player.z, visualYaw);
     updatePlayerMarker(object, player);
   }
 
@@ -1136,17 +1172,21 @@ function queueObjectTransform(object: THREE.Object3D, x: number, y: number, z: n
 
 function queueForwardOrientation(object: THREE.Object3D, yaw: number, pitch: number, roll = 0): void {
   const forward = directionFromYawPitch(yaw, pitch);
-  const forwardVector = new THREE.Vector3(forward.x, forward.y, forward.z).normalize();
-  const targetQuaternion = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), forwardVector);
-  const rollQuaternion = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), roll);
+  const forwardVector = SHARED_FORWARD_VECTOR.set(forward.x, forward.y, forward.z).normalize();
+  const targetQuaternion = SHARED_TARGET_QUATERNION.setFromUnitVectors(SHARED_FORWARD_AXIS, forwardVector);
+  const rollQuaternion = SHARED_ROLL_QUATERNION.setFromAxisAngle(SHARED_ROLL_AXIS, roll);
   targetQuaternion.multiply(rollQuaternion);
+  const storedTargetQuaternion = object.userData.targetQuaternion instanceof THREE.Quaternion
+    ? object.userData.targetQuaternion
+    : new THREE.Quaternion();
+  storedTargetQuaternion.copy(targetQuaternion);
 
   if (object.userData.initializedQuaternion !== true) {
-    object.quaternion.copy(targetQuaternion);
+    object.quaternion.copy(storedTargetQuaternion);
     object.userData.initializedQuaternion = true;
   }
 
-  object.userData.targetQuaternion = targetQuaternion;
+  object.userData.targetQuaternion = storedTargetQuaternion;
 }
 
 function smoothDynamicObjects(
@@ -1165,7 +1205,7 @@ function smoothDynamicObjects(
     const targetY = object.userData.targetY;
     const targetZ = object.userData.targetZ;
     if (typeof targetX === "number" && typeof targetY === "number" && typeof targetZ === "number") {
-      object.position.lerp(new THREE.Vector3(targetX, targetY, targetZ), blend);
+      object.position.lerp(SHARED_LERP_TARGET.set(targetX, targetY, targetZ), blend);
     }
 
     if (typeof object.userData.targetYaw === "number") {
@@ -1214,21 +1254,22 @@ function updateCannonReticleOverlay(
   const forwardDirection = directionFromYawPitch(viewYaw, viewPitch);
   const upDirection = upVectorFromYawPitch(viewYaw, viewPitch);
   const rightDirection = rightVectorFromYawPitch(viewYaw, viewPitch);
-  const forward = new THREE.Vector3(forwardDirection.x, forwardDirection.y, forwardDirection.z);
-  const right = new THREE.Vector3(rightDirection.x, rightDirection.y, rightDirection.z);
-  const up = new THREE.Vector3(upDirection.x, upDirection.y, upDirection.z);
+  const forward = SHARED_FORWARD_VECTOR.set(forwardDirection.x, forwardDirection.y, forwardDirection.z);
+  const right = SHARED_RIGHT_VECTOR.set(rightDirection.x, rightDirection.y, rightDirection.z);
+  const up = SHARED_UP_VECTOR.set(upDirection.x, upDirection.y, upDirection.z);
 
-  const raycaster = new THREE.Raycaster();
-  raycaster.far = PLAYER_PLASMA_RANGE;
+  SHARED_RETICLE_RAYCASTER.far = PLAYER_PLASMA_RANGE;
 
   const updateBracket = (element: HTMLSpanElement, side: "left" | "right") => {
-    const origin = camera.position.clone()
+    const origin = SHARED_RAY_ORIGIN
+      .copy(camera.position)
       .addScaledVector(right, side === "left" ? -GUN_MOUNT_OFFSET_X : GUN_MOUNT_OFFSET_X)
       .addScaledVector(up, GUN_MOUNT_OFFSET_Y)
       .addScaledVector(forward, GUN_MOUNT_OFFSET_Z);
 
-    raycaster.set(origin, forward);
-    const intersections = raycaster.intersectObjects([sceneRoot, playerLayer], true);
+    SHARED_RETICLE_RAYCASTER.set(origin, forward);
+    SHARED_RETICLE_HITS.length = 0;
+    const intersections = SHARED_RETICLE_RAYCASTER.intersectObjects([sceneRoot, playerLayer], true, SHARED_RETICLE_HITS);
     let distance = PLAYER_PLASMA_FALLBACK_RANGE;
     let locked = false;
 
@@ -1246,17 +1287,31 @@ function updateCannonReticleOverlay(
       }
     }
 
-    const targetPoint = origin.clone().addScaledVector(forward, distance);
-    const projected = targetPoint.project(camera);
+    const projected = SHARED_PROJECTED_POINT
+      .copy(SHARED_TARGET_POINT.copy(origin).addScaledVector(forward, distance))
+      .project(camera);
     if (projected.z < -1 || projected.z > 1) {
-      element.style.opacity = "0";
+      if (element.style.opacity !== "0") {
+        element.style.opacity = "0";
+      }
       return;
     }
 
-    element.style.opacity = "1";
-    element.style.left = `${(projected.x * 0.5 + 0.5) * width}px`;
-    element.style.top = `${(-projected.y * 0.5 + 0.5) * height}px`;
-    element.dataset.state = locked ? "locked" : "neutral";
+    const nextLeft = `${(projected.x * 0.5 + 0.5) * width}px`;
+    const nextTop = `${(-projected.y * 0.5 + 0.5) * height}px`;
+    const nextState = locked ? "locked" : "neutral";
+    if (element.style.opacity !== "1") {
+      element.style.opacity = "1";
+    }
+    if (element.style.left !== nextLeft) {
+      element.style.left = nextLeft;
+    }
+    if (element.style.top !== nextTop) {
+      element.style.top = nextTop;
+    }
+    if (element.dataset.state !== nextState) {
+      element.dataset.state = nextState;
+    }
   };
 
   updateBracket(leftBracket, "left");
@@ -1411,7 +1466,7 @@ function updateWalkerAssemblyPose(root: THREE.Group, player: SnapshotPlayerState
   const rideHeight = player.rideHeight ?? HECTOR_DEFAULT_RIDE_HEIGHT;
   const rig = root.getObjectByName("walker-rig");
   if (rig) {
-    rig.position.set(0, headHeight + rideHeight, 0);
+    rig.position.set(0, headHeight, 0);
   }
 
   const hull = root.getObjectByName("walker-hull");
