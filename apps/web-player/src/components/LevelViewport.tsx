@@ -477,10 +477,10 @@ export default function LevelViewport({
 
       const localPlayerObject = localPlayerIdRef.current ? playerMeshes.get(localPlayerIdRef.current) ?? null : null;
       const localScoutObject = liveLocalScout ? scoutMeshes.get(liveLocalScout.id) ?? null : null;
-      const focus = localPlayerObject
-        ? { x: localPlayerObject.position.x, y: localPlayerObject.position.y, z: localPlayerObject.position.z }
-        : liveLocalPlayer
-          ? { x: liveLocalPlayer.x, y: liveLocalPlayer.y, z: liveLocalPlayer.z }
+      const focus = liveLocalPlayer
+        ? { x: liveLocalPlayer.x, y: liveLocalPlayer.y, z: liveLocalPlayer.z }
+        : localPlayerObject
+          ? { x: localPlayerObject.position.x, y: localPlayerObject.position.y, z: localPlayerObject.position.z }
           : spawnAnchor;
       const scoutViewActive = Boolean(liveLocalPlayer?.alive && liveLocalPlayer?.scoutView && liveLocalScout?.active);
 
@@ -1051,7 +1051,7 @@ function syncPlayerMeshes(
     }
 
     object.visible = player.alive;
-    object.userData.transformResponsiveness = player.id === localPlayerId ? 1 : 0.9;
+    object.userData.transformResponsiveness = player.id === localPlayerId ? 0.82 : 0.9;
     queueObjectTransform(object, player.x, player.y, player.z, player.bodyYaw);
     updatePlayerMarker(object, player);
   }
@@ -1411,7 +1411,7 @@ function updateWalkerAssemblyPose(root: THREE.Group, player: SnapshotPlayerState
   const rideHeight = player.rideHeight ?? HECTOR_DEFAULT_RIDE_HEIGHT;
   const rig = root.getObjectByName("walker-rig");
   if (rig) {
-    rig.position.set(0, headHeight, 0);
+    rig.position.set(0, headHeight + rideHeight, 0);
   }
 
   const hull = root.getObjectByName("walker-hull");
