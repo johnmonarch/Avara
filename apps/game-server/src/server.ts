@@ -1387,7 +1387,7 @@ function updateWalkerLegContacts(room: RoomState, player: PlayerState, fpsScale:
     moveRadius = Math.abs(moveRadius);
     const targetY = player.y - (elevation / 16) + (Math.sin(legPhase) * moveRadius);
 
-    const tempX = index === 0 ? HECTOR_LEG_SPACE_ABS : -HECTOR_LEG_SPACE_ABS;
+    const tempX = index === 0 ? -HECTOR_LEG_SPACE_ABS : HECTOR_LEG_SPACE_ABS;
     const tempZ = (targetX + leg.x) / 2;
     const worldX = player.x + (tempZ * sinHeading) - (tempX * cosHeading);
     const worldZ = player.z + (tempZ * cosHeading) + (tempX * sinHeading);
@@ -1445,7 +1445,7 @@ function stabilizeWalkerIdleLegs(
 
   for (let index = 0; index < 2; index += 1) {
     const leg = player.legs[index];
-    const tempX = index === 0 ? HECTOR_LEG_SPACE_ABS : -HECTOR_LEG_SPACE_ABS;
+    const tempX = index === 0 ? -HECTOR_LEG_SPACE_ABS : HECTOR_LEG_SPACE_ABS;
     const worldX = player.x - (tempX * cosHeading);
     const worldZ = player.z + (tempX * sinHeading);
     const footScanHeight = player.y + HECTOR_LEG_SCAN_HEIGHT + (elevation / 2);
