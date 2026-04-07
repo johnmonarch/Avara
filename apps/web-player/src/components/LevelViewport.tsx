@@ -86,6 +86,7 @@ const HECTOR_DEFAULT_RIDE_HEIGHT = 0.2500038147554742;
 const HECTOR_HULL_VISUAL_LIFT = 0.56;
 const HECTOR_CAMERA_LIFT = 0.34;
 const HECTOR_VISUAL_STAND_OFFSET = 0.22;
+const PLAYER_HIT_CENTER_Y = 2.1;
 const VIEW_OFFSET_Y = -0.25;
 const GUN_MOUNT_OFFSET_X = 0.25;
 const GUN_MOUNT_OFFSET_Y = 0;
@@ -245,7 +246,7 @@ export default function LevelViewport({
       y: localPlayer.y + getPlayerViewTargetHeight(localPlayer) + VIEW_OFFSET_Y,
       z: localPlayer.z
     };
-    const forward = directionFromYawPitch(localPlayer.turretYaw, localPlayer.turretPitch);
+    const forward = simulationDirectionFromYawPitch(localPlayer.turretYaw, localPlayer.turretPitch);
     let bestAlignment = -1;
     let bestDistance = Number.POSITIVE_INFINITY;
 
@@ -1088,9 +1089,7 @@ function syncPlayerMeshes(
 
     object.visible = player.alive;
     object.userData.transformResponsiveness = player.id === localPlayerId ? 0.82 : 0.9;
-    const visualYaw = object.userData.playerVisualKind === "walker"
-      ? simulationYawToViewYaw(player.bodyYaw)
-      : player.bodyYaw;
+    const visualYaw = player.bodyYaw;
     queueObjectTransform(object, player.x, player.y, player.z, visualYaw);
     updatePlayerMarker(object, player);
   }
@@ -1273,7 +1272,7 @@ function updateCannonReticleOverlay(
   const right = SHARED_RIGHT_VECTOR.set(rightDirection.x, rightDirection.y, rightDirection.z);
   const up = SHARED_UP_VECTOR.set(upDirection.x, upDirection.y, upDirection.z);
   // Keep reticle projection on the exact authoritative gun frame.
-  const playerOrigin = SHARED_PLAYER_ORIGIN.set(player.x, player.y, player.z);
+  const playerOrigin = SHARED_PLAYER_ORIGIN.set(player.x, player.y + PLAYER_HIT_CENTER_Y, player.z);
 
   SHARED_RETICLE_RAYCASTER.far = PLAYER_PLASMA_RANGE;
 
@@ -2031,7 +2030,12 @@ function syncProjectileMeshes(
     }
 
     queueObjectTransform(object, projectile.x, projectile.y, projectile.z, projectile.yaw ?? 0);
-    queueForwardOrientation(object, projectile.yaw ?? 0, projectile.pitch ?? 0, projectile.roll ?? 0);
+    queueForwardOrientation(
+      object,
+      simulationYawToViewYaw(projectile.yaw ?? 0),
+      projectile.pitch ?? 0,
+      projectile.roll ?? 0
+    );
     delete object.userData.targetYaw;
     delete object.userData.targetPitch;
     delete object.userData.targetRoll;
@@ -2061,7 +2065,12 @@ function syncFragmentMeshes(
     }
 
     queueObjectTransform(object, fragment.x, fragment.y, fragment.z, fragment.yaw ?? 0);
-    queueForwardOrientation(object, fragment.yaw ?? 0, fragment.pitch ?? 0, fragment.roll ?? 0);
+    queueForwardOrientation(
+      object,
+      simulationYawToViewYaw(fragment.yaw ?? 0),
+      fragment.pitch ?? 0,
+      fragment.roll ?? 0
+    );
     delete object.userData.targetYaw;
     delete object.userData.targetPitch;
     delete object.userData.targetRoll;
@@ -2355,6 +2364,15 @@ function directionFromYawPitch(yaw: number, pitch: number): { x: number; y: numb
     x: Math.cos(yaw) * cosPitch,
     y: Math.sin(pitch),
     z: Math.sin(yaw) * cosPitch
+  };
+}
+
+function simulationDirectionFromYawPitch(yaw: number, pitch: number): { x: number; y: number; z: number } {
+  const cosPitch = Math.cos(pitch);
+  return {
+    x: Math.sin(yaw) * cosPitch,
+    y: Math.sin(pitch),
+    z: Math.cos(yaw) * cosPitch
   };
 }
 

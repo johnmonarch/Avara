@@ -3919,17 +3919,17 @@ function positiveModulo(value: number, mod: number): number {
 function directionFromYawPitch(yaw: number, pitch: number) {
   const cosPitch = Math.cos(pitch);
   return {
-    x: Math.cos(yaw) * cosPitch,
+    x: Math.sin(yaw) * cosPitch,
     y: Math.sin(pitch),
-    z: Math.sin(yaw) * cosPitch
+    z: Math.cos(yaw) * cosPitch
   };
 }
 
 function upVectorFromYawPitch(yaw: number, pitch: number) {
   return {
-    x: -Math.cos(yaw) * Math.sin(pitch),
+    x: -Math.sin(yaw) * Math.sin(pitch),
     y: Math.cos(pitch),
-    z: -Math.sin(yaw) * Math.sin(pitch)
+    z: -Math.cos(yaw) * Math.sin(pitch)
   };
 }
 

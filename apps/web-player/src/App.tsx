@@ -1445,12 +1445,13 @@ function buildCombatInput(
     (isBindingActive(keys, bindings.turnRight) ? 1 : 0) +
     (isBindingActive(keys, bindings.turnLeft) ? -1 : 0);
   const modernizedPointerSteer = settings.controlPreset === "modernized";
+  const carriedAimYaw = modernizedPointerSteer ? 0 : look.aimYaw;
   const payload = {
     moveForward,
     strafe: settings.controlPreset === "modernized" ? clamp(strafe, -1, 1) : 0,
     bodyYawTarget: modernizedPointerSteer ? viewYawToSimulationYaw(look.viewYaw) : undefined,
     turnBody: modernizedPointerSteer ? 0 : clamp(keyTurn, -1, 1),
-    aimYaw: look.aimYaw,
+    aimYaw: carriedAimYaw,
     aimPitch: look.aimPitch,
     stanceDelta: stanceDeltaRef.current,
     primaryFire: primaryFire || isBindingActive(keys, bindings.primaryFireKeys),
