@@ -117,6 +117,11 @@ const SCOUT_VERY_CLOSE = 3;
 const SCOUT_FOLLOW_RADIUS = 10;
 const SCOUT_SPAWN_PLATFORM = 1.5;
 const SCOUT_COLLISION_RADIUS = 1.2;
+const TELEPORTER_DEFAULT_ACTIVE_RANGE = 3.5;
+const TELEPORTER_DEFAULT_DEAD_RANGE = 0;
+const TELEPORTER_RETRANSMIT_CLASSIC_FRAMES = 60;
+const TELEPORTER_SPEED_LIMIT_RATIO = 2.25;
+const TELEPORTER_DEFAULT_SOUND_ID = 410;
 const GUN_MOUNT_OFFSET_X = 0.25;
 const GUN_MOUNT_OFFSET_Y = 0;
 const GUN_MOUNT_OFFSET_Z = 0.75;
@@ -404,6 +409,22 @@ interface WalkerLegState {
   lowAngle: number;
 }
 
+interface TeleporterState {
+  id: string;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  activeRange: number;
+  deadRange: number;
+  transportGroup: string | null;
+  destGroup: string | null;
+  soundId: number;
+  useCount: number;
+  goTimer: number;
+  enabled: boolean;
+}
+
 interface PlayerState {
   id: string;
   displayName: string;
@@ -489,6 +510,7 @@ interface RoomState {
   bounds: RoomBounds;
   blockers: RectSurface[];
   ramps: RampSurface[];
+  teleporters: TeleporterState[];
   collisionMeshes: CollisionMesh[];
   collisionTriangleBuffer: Float64Array;
   pickups: PickupState[];
@@ -533,6 +555,7 @@ setInterval(() => {
     processRespawns(room);
     simulatePlayers(room, dt);
     simulateScouts(room, dt);
+    processTeleporters(room);
     processPickups(room);
     simulateProjectiles(room, dt);
     simulateFragments(room, dt);
@@ -798,6 +821,7 @@ async function createRoomState(roomId: string, scene: LevelScene, maxPlayers: nu
     bounds,
     blockers,
     ramps,
+    teleporters: deriveTeleporters(scene.nodes),
     collisionMeshes,
     collisionTriangleBuffer,
     pickups: derivePickups(scene.nodes),
@@ -1795,6 +1819,99 @@ function processRespawns(room: RoomState): void {
       message: `${player.displayName} respawned`
     });
   }
+}
+
+function processTeleporters(room: RoomState): void {
+  if (!room.teleporters.length) {
+    return;
+  }
+
+  for (const teleporter of room.teleporters) {
+    if (teleporter.goTimer > 0) {
+      teleporter.goTimer -= 1;
+    }
+  }
+
+  for (const player of room.players.values()) {
+    if (!player.alive) {
+      continue;
+    }
+
+    for (const teleporter of room.teleporters) {
+      if (!teleporter.enabled || teleporter.goTimer > 0 || !teleporter.destGroup) {
+        continue;
+      }
+
+      const distance = Math.hypot(
+        player.x - teleporter.x,
+        player.y - teleporter.y,
+        player.z - teleporter.z
+      );
+      const speed = Math.hypot(player.vx, player.vy, player.vz);
+
+      if (
+        distance >= teleporter.activeRange
+        || distance < teleporter.deadRange
+        || speed >= TELEPORTER_SPEED_LIMIT_RATIO * teleporter.activeRange
+      ) {
+        continue;
+      }
+
+      const destination = selectTeleportDestination(room, teleporter);
+      if (!destination) {
+        continue;
+      }
+
+      applyTeleporterTransport(room, player, teleporter, destination);
+      break;
+    }
+  }
+}
+
+function selectTeleportDestination(room: RoomState, source: TeleporterState): TeleporterState | null {
+  if (!source.destGroup) {
+    return null;
+  }
+
+  let best: TeleporterState | null = null;
+  for (const teleporter of room.teleporters) {
+    if (teleporter.id === source.id || teleporter.transportGroup !== source.destGroup) {
+      continue;
+    }
+    if (!best || teleporter.useCount < best.useCount) {
+      best = teleporter;
+    }
+  }
+
+  return best;
+}
+
+function applyTeleporterTransport(
+  room: RoomState,
+  player: PlayerState,
+  source: TeleporterState,
+  destination: TeleporterState
+): void {
+  const destinationFloor = sampleFloorHeight(room, destination.x, destination.z, destination.y + MAX_STEP_HEIGHT);
+  player.x = destination.x;
+  player.y = Math.max(destination.y, destinationFloor);
+  player.z = destination.z;
+  player.vx = 0;
+  player.vy = 0;
+  player.vz = 0;
+  player.leftMotor = 0;
+  player.rightMotor = 0;
+  player.strafeMotor = 0;
+  player.bodyYaw = destination.yaw;
+  player.turretYaw = destination.yaw;
+  player.didBump = false;
+  player.jumpFlag = false;
+
+  const cooldown = framesFromClassic(TELEPORTER_RETRANSMIT_CLASSIC_FRAMES, tickDeltaScale());
+  source.goTimer = cooldown;
+  destination.goTimer = cooldown;
+  source.useCount += 1;
+  destination.useCount += 1;
 }
 
 function toggleScoutView(room: RoomState, player: PlayerState): void {
@@ -3297,6 +3414,38 @@ function derivePickups(nodes: SceneNode[]): PickupState[] {
     });
 }
 
+function deriveTeleporters(nodes: SceneNode[]): TeleporterState[] {
+  return nodes
+    .filter((node) => node.type === "teleporter")
+    .map((node) => {
+      const meta = node.meta ?? {};
+      const transportGroup = normalizeTeleporterGroup(meta.group);
+      const explicitDestGroup = normalizeTeleporterGroup(meta.destGroup ?? meta.destgroup);
+      const destGroup = explicitDestGroup ?? transportGroup;
+      const status = meta.status;
+      const start = meta.start;
+      const enabled = status === undefined
+        ? true
+        : Boolean(status) || asNumber(start) === 0 || asString(start) === "0";
+
+      return {
+        id: node.id,
+        x: node.position.x,
+        y: node.position.y,
+        z: node.position.z,
+        yaw: node.rotation?.yaw ?? 0,
+        activeRange: Math.max(0.25, asNumber(meta.activeRange) ?? TELEPORTER_DEFAULT_ACTIVE_RANGE),
+        deadRange: Math.max(0, asNumber(meta.deadRange) ?? TELEPORTER_DEFAULT_DEAD_RANGE),
+        transportGroup,
+        destGroup,
+        soundId: Math.max(0, Math.round(asNumber(meta.sound) ?? TELEPORTER_DEFAULT_SOUND_ID)),
+        useCount: 0,
+        goTimer: 0,
+        enabled
+      };
+    });
+}
+
 function deriveBounds(nodes: SceneNode[], blockers: RectSurface[], ramps: RampSurface[]): RoomBounds {
   let minX = Number.POSITIVE_INFINITY;
   let maxX = Number.NEGATIVE_INFINITY;
@@ -4189,6 +4338,16 @@ function asNumber(value: unknown): number | undefined {
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function normalizeTeleporterGroup(value: unknown): string | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  if (typeof value === "string" && value.length) {
+    return value;
+  }
+  return null;
 }
 
 function normalizeScoutCommand(value: unknown): ScoutCommand | null {
