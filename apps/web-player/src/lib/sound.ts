@@ -208,18 +208,22 @@ class AvaraSoundRuntime {
         }
 
         const newlyTouching = previousLeg ? !previousLeg.touching : false;
+        if (!newlyTouching) {
+          continue;
+        }
+
         const landingDrop = Math.max(0, (previousLeg?.whereY ?? leg.whereY) - leg.whereY);
         const impact = landingDrop + Math.hypot(player.vx ?? 0, player.vz ?? 0) + Math.abs(player.vy ?? 0) * 0.35;
-        if (!newlyTouching && impact < 0.12) {
+        if (impact < 0.08) {
           continue;
         }
 
         this.playOneShot(
           groundStepSoundId,
           groundStepSoundUrl,
-          spatialVolume(localPlayer, { x: leg.whereX, y: leg.whereY, z: leg.whereZ }, clamp(0.12 + impact * 0.22, 0.08, 0.42)),
+          spatialVolume(localPlayer, { x: leg.whereX, y: leg.whereY, z: leg.whereZ }, clamp(0.08 + impact * 0.14, 0.06, 0.28)),
           `step:${player.id}:${index}`,
-          110
+          220
         );
       }
     }

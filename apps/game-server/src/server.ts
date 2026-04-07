@@ -1301,7 +1301,7 @@ function resolveMovement(room: RoomState, player: PlayerState, targetX: number, 
 
   const floor = sampleFloorHeight(room, player.x, player.z, player.y);
   const landed = targetY <= floor + 0.01;
-  return { x: player.x, y: landed ? floor : player.y, z: player.z, landed, moved: false, bumped: true };
+  return { x: player.x, y: landed ? floor : targetY, z: player.z, landed, moved: false, bumped: true };
 }
 
 function resolveBumpPush(room: RoomState, player: PlayerState, targetY: number) {
@@ -1619,6 +1619,12 @@ function isBlocked(
 
   for (const blocker of room.blockers) {
     if (!blockerOverlapsMovement(start.x, start.z, end.x, end.z, blocker, PLAYER_RADIUS)) {
+      continue;
+    }
+
+    // When the walker is already on top of a platform, its side walls should not
+    // behave like a blocking fence at foot level while stepping off the edge.
+    if (blocker.topY <= Math.min(start.y, end.y) + 0.08) {
       continue;
     }
 
