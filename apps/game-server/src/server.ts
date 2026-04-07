@@ -42,7 +42,7 @@ const disconnectGraceSeconds = Number(process.env.DISCONNECT_GRACE_SECONDS ?? "2
 const buildVersion = process.env.BUILD_VERSION ?? "dev-local";
 const startedAt = Date.now();
 
-const PLAYER_RADIUS = 1.2;
+const PLAYER_RADIUS = 0.62;
 const PLAYER_HIT_CENTER_Y = 2.1;
 const PLAYER_HIT_RADIUS = 1.8;
 const MAX_STEP_HEIGHT = 1.4;
@@ -935,7 +935,9 @@ function simulatePlayers(room: RoomState, dt: number): void {
     simulateWalkerMotors(room, player, fpsScale);
     simulateWalkerVertical(room, player, fpsScale);
 
-    player.turretYaw = normalizeAngle(player.bodyYaw + clamp(player.input.aimYaw, -WALKER_AIM_YAW_LIMIT, WALKER_AIM_YAW_LIMIT));
+    player.turretYaw = typeof player.input.bodyYawTarget === "number"
+      ? normalizeAngle(player.input.bodyYawTarget)
+      : normalizeAngle(player.bodyYaw + clamp(player.input.aimYaw, -WALKER_AIM_YAW_LIMIT, WALKER_AIM_YAW_LIMIT));
     player.turretPitch = clamp(player.input.aimPitch, WALKER_AIM_PITCH_MIN, WALKER_AIM_PITCH_MAX);
 
     const targetX = player.x + fpsCoefficient2(player.vx, fpsScale);
@@ -1334,37 +1336,9 @@ function resolveMovement(room: RoomState, player: PlayerState, targetX: number, 
     return { ...slideZ, moved: true, bumped: true };
   }
 
-  const lateralPush = resolveBumpPush(room, player, targetY);
-  if (lateralPush) {
-    return { ...lateralPush, moved: true, bumped: true };
-  }
-
   const floor = sampleFloorHeight(room, player.x, player.z, player.y);
   const landed = targetY <= floor + 0.01;
   return { x: player.x, y: landed ? floor : targetY, z: player.z, landed, moved: false, bumped: true };
-}
-
-function resolveBumpPush(room: RoomState, player: PlayerState, targetY: number) {
-  const offsetDistance = fpsCoefficient2(1 / 16, tickDeltaScale());
-  const pushMagnitude = fpsCoefficient2(1 / 8, tickDeltaScale());
-  const leftX = Math.cos(player.bodyYaw) * offsetDistance;
-  const leftZ = Math.sin(player.bodyYaw) * offsetDistance;
-
-  const left = resolvePosition(room, player, player.x + leftX, targetY, player.z - leftZ);
-  if (left) {
-    player.vx -= Math.cos(player.bodyYaw) * pushMagnitude;
-    player.vz += Math.sin(player.bodyYaw) * pushMagnitude;
-    return left;
-  }
-
-  const right = resolvePosition(room, player, player.x - leftX, targetY, player.z + leftZ);
-  if (right) {
-    player.vx += Math.cos(player.bodyYaw) * pushMagnitude;
-    player.vz -= Math.sin(player.bodyYaw) * pushMagnitude;
-    return right;
-  }
-
-  return null;
 }
 
 function resolvePosition(room: RoomState, player: PlayerState, x: number, targetY: number, z: number) {
@@ -2364,7 +2338,7 @@ function simulateProjectiles(room: RoomState, _dt: number): void {
     projectile.x = end.x;
     projectile.y = end.y;
     projectile.z = end.z;
-    projectile.yaw = Math.atan2(projectile.vz, projectile.vx);
+    projectile.yaw = Math.atan2(projectile.vx, projectile.vz);
     projectile.pitch = Math.atan2(projectile.vy, Math.hypot(projectile.vx, projectile.vz) || 1);
 
     const expired = projectile.remainingTicks <= 0 || projectileOutsideBounds(room, projectile);
@@ -2399,7 +2373,7 @@ function simulateFragments(room: RoomState, _dt: number): void {
     fragment.vy = fragment.vy * fragment.friction - fpsCoefficient2(fragment.gravity * room.settings.gravity, fpsScale);
     fragment.vz *= fragment.friction;
 
-    fragment.yaw = Math.atan2(fragment.vz, fragment.vx);
+    fragment.yaw = Math.atan2(fragment.vx, fragment.vz);
     fragment.pitch = Math.atan2(fragment.vy, Math.hypot(fragment.vx, fragment.vz) || 1);
     fragment.roll += fpsCoefficient2(fragment.spin, fpsScale);
     fragment.remainingTicks -= 1;

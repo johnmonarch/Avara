@@ -1501,7 +1501,7 @@ function updateWalkerAssemblyPose(root: THREE.Group, player: SnapshotPlayerState
   const elevation = player.stance ?? HECTOR_DEFAULT_STANCE;
   const crouch = player.crouch ?? 0;
   const headHeight = Math.max(0.9, elevation - crouch);
-  const yawDelta = normalizeAngle(player.bodyYaw - player.turretYaw);
+  const yawDelta = normalizeAngle(player.turretYaw - player.bodyYaw);
   const rideHeight = player.rideHeight ?? HECTOR_DEFAULT_RIDE_HEIGHT;
   const rig = root.getObjectByName("walker-rig");
   if (rig) {

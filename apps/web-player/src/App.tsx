@@ -1450,7 +1450,7 @@ function buildCombatInput(
     strafe: settings.controlPreset === "modernized" ? clamp(strafe, -1, 1) : 0,
     bodyYawTarget: modernizedPointerSteer ? viewYawToSimulationYaw(look.viewYaw) : undefined,
     turnBody: modernizedPointerSteer ? 0 : clamp(keyTurn, -1, 1),
-    aimYaw: look.aimYaw,
+    aimYaw: modernizedPointerSteer ? 0 : look.aimYaw,
     aimPitch: look.aimPitch,
     stanceDelta: stanceDeltaRef.current,
     primaryFire: primaryFire || isBindingActive(keys, bindings.primaryFireKeys),
