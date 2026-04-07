@@ -83,8 +83,9 @@ const HECTOR_LEG_HIGH_LENGTH = 0.905;
 const HECTOR_LEG_LOW_LENGTH = 1.15;
 const HECTOR_DEFAULT_STANCE = 1.7;
 const HECTOR_DEFAULT_RIDE_HEIGHT = 0.2500038147554742;
-const HECTOR_HULL_VISUAL_LIFT = 0.34;
-const PLAYER_HIT_CENTER_Y = 2.1;
+const HECTOR_HULL_VISUAL_LIFT = 0.56;
+const HECTOR_CAMERA_LIFT = 0.34;
+const HECTOR_VISUAL_STAND_OFFSET = 0.22;
 const VIEW_OFFSET_Y = -0.25;
 const GUN_MOUNT_OFFSET_X = 0.25;
 const GUN_MOUNT_OFFSET_Y = 0;
@@ -566,11 +567,10 @@ export default function LevelViewport({
           camera,
           sceneRoot,
           playerLayer,
-          heading.current.yaw,
-          heading.current.pitch,
-          scoutViewActive,
           liveLocalPlayer,
-          localPlayerIdRef.current
+          localPlayerIdRef.current,
+          heading.current,
+          pointerLockedToArena
         );
       }
 
@@ -1236,11 +1236,10 @@ function updateCannonReticleOverlay(
   camera: THREE.PerspectiveCamera,
   sceneRoot: THREE.Group,
   playerLayer: THREE.Group,
-  viewYaw: number,
-  viewPitch: number,
-  scoutViewActive: boolean,
   player: SnapshotPlayerState | null,
-  localPlayerId?: string
+  localPlayerId?: string,
+  localHeading?: { yaw: number; pitch: number },
+  pointerLockedToArena = false
 ): void {
   if (!root || !leftBracket || !rightBracket) {
     return;
@@ -1255,21 +1254,35 @@ function updateCannonReticleOverlay(
 
   const width = mount.clientWidth;
   const height = mount.clientHeight;
-  const reticleYaw = scoutViewActive
-    ? simulationYawToViewYaw(player.turretYaw)
-    : viewYaw;
-  const reticlePitch = scoutViewActive ? player.turretPitch : viewPitch;
+  const useLivePointerHeading = Boolean(
+    pointerLockedToArena
+      && localHeading
+      && localPlayerId
+      && player.id === localPlayerId
+  );
+  const reticleYaw = useLivePointerHeading
+    ? localHeading!.yaw
+    : simulationYawToViewYaw(player.turretYaw);
+  const reticlePitch = useLivePointerHeading
+    ? localHeading!.pitch
+    : player.turretPitch;
   const forwardDirection = directionFromYawPitch(reticleYaw, reticlePitch);
   const upDirection = upVectorFromYawPitch(reticleYaw, reticlePitch);
   const rightDirection = rightVectorFromYawPitch(reticleYaw, reticlePitch);
   const forward = SHARED_FORWARD_VECTOR.set(forwardDirection.x, forwardDirection.y, forwardDirection.z);
   const right = SHARED_RIGHT_VECTOR.set(rightDirection.x, rightDirection.y, rightDirection.z);
   const up = SHARED_UP_VECTOR.set(upDirection.x, upDirection.y, upDirection.z);
-  const playerOrigin = SHARED_PLAYER_ORIGIN.set(player.x, player.y + PLAYER_HIT_CENTER_Y, player.z);
+  // Keep reticle projection on the exact authoritative gun frame.
+  const playerOrigin = SHARED_PLAYER_ORIGIN.set(player.x, player.y, player.z);
 
   SHARED_RETICLE_RAYCASTER.far = PLAYER_PLASMA_RANGE;
 
-  const updateBracket = (element: HTMLSpanElement, side: "left" | "right") => {
+  const computeBracket = (side: "left" | "right"): {
+    left: number;
+    top: number;
+    locked: boolean;
+    visible: boolean;
+  } => {
     const origin = SHARED_RAY_ORIGIN
       .copy(playerOrigin)
       .addScaledVector(right, side === "left" ? -GUN_MOUNT_OFFSET_X : GUN_MOUNT_OFFSET_X)
@@ -1300,15 +1313,45 @@ function updateCannonReticleOverlay(
       .copy(SHARED_TARGET_POINT.copy(origin).addScaledVector(forward, distance))
       .project(camera);
     if (projected.z < -1 || projected.z > 1) {
-      if (element.style.opacity !== "0") {
-        element.style.opacity = "0";
-      }
-      return;
+      return { left: 0, top: 0, locked, visible: false };
     }
 
-    const nextLeft = `${(projected.x * 0.5 + 0.5) * width}px`;
-    const nextTop = `${(-projected.y * 0.5 + 0.5) * height}px`;
-    const nextState = locked ? "locked" : "neutral";
+    return {
+      left: (projected.x * 0.5 + 0.5) * width,
+      top: (-projected.y * 0.5 + 0.5) * height,
+      locked,
+      visible: true
+    };
+  };
+
+  const left = computeBracket("left");
+  const rightResult = computeBracket("right");
+
+  if (!left.visible) {
+    if (leftBracket.style.opacity !== "0") {
+      leftBracket.style.opacity = "0";
+    }
+  }
+  if (!rightResult.visible) {
+    if (rightBracket.style.opacity !== "0") {
+      rightBracket.style.opacity = "0";
+    }
+  }
+  if (!left.visible || !rightResult.visible) {
+    return;
+  }
+
+  // Keep bracket ordering stable so left/right markers do not cross over.
+  const leftOnScreen = left.left <= rightResult.left ? left : rightResult;
+  const rightOnScreen = left.left <= rightResult.left ? rightResult : left;
+
+  const applyBracket = (
+    element: HTMLSpanElement,
+    bracket: { left: number; top: number; locked: boolean }
+  ) => {
+    const nextLeft = `${bracket.left}px`;
+    const nextTop = `${bracket.top}px`;
+    const nextState = bracket.locked ? "locked" : "neutral";
     if (element.style.opacity !== "1") {
       element.style.opacity = "1";
     }
@@ -1323,8 +1366,8 @@ function updateCannonReticleOverlay(
     }
   };
 
-  updateBracket(leftBracket, "left");
-  updateBracket(rightBracket, "right");
+  applyBracket(leftBracket, leftOnScreen);
+  applyBracket(rightBracket, rightOnScreen);
 }
 
 function findTaggedPlayerId(object: THREE.Object3D | null): string | undefined {
@@ -1457,11 +1500,11 @@ function updateWalkerAssemblyPose(root: THREE.Group, player: SnapshotPlayerState
   const elevation = player.stance ?? HECTOR_DEFAULT_STANCE;
   const crouch = player.crouch ?? 0;
   const headHeight = Math.max(0.95, elevation - crouch);
-  const yawDelta = normalizeAngle(player.bodyYaw - player.turretYaw);
+  const yawDelta = normalizeAngle(player.turretYaw - player.bodyYaw);
   const rideHeight = player.rideHeight ?? HECTOR_DEFAULT_RIDE_HEIGHT;
   const rig = root.getObjectByName("walker-rig");
   if (rig) {
-    rig.position.set(0, headHeight, 0);
+    rig.position.set(0, headHeight + HECTOR_VISUAL_STAND_OFFSET, 0);
   }
 
   const hull = root.getObjectByName("walker-hull");
@@ -1811,7 +1854,7 @@ function getPlayerViewTargetHeight(player: SnapshotPlayerState): number {
     (player.stance ?? HECTOR_DEFAULT_STANCE)
       - (player.crouch ?? 0)
       + (player.rideHeight ?? HECTOR_DEFAULT_RIDE_HEIGHT)
-      + HECTOR_HULL_VISUAL_LIFT
+      + HECTOR_CAMERA_LIFT
   );
 }
 
@@ -1821,7 +1864,7 @@ function getPlayerCameraOriginHeight(player: SnapshotPlayerState): number {
     (player.stance ?? HECTOR_DEFAULT_STANCE)
       - (player.crouch ?? 0)
       + (player.rideHeight ?? HECTOR_DEFAULT_RIDE_HEIGHT)
-      + HECTOR_HULL_VISUAL_LIFT
+      + HECTOR_CAMERA_LIFT
       + VIEW_OFFSET_Y
   );
 }
