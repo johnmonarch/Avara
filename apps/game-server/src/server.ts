@@ -119,9 +119,15 @@ const SCOUT_SPAWN_PLATFORM = 1.5;
 const SCOUT_COLLISION_RADIUS = 1.2;
 const TELEPORTER_DEFAULT_ACTIVE_RANGE = 3.5;
 const TELEPORTER_DEFAULT_DEAD_RANGE = 0;
+const TELEPORTER_PULL_RANGE = 30;
+const TELEPORTER_PULL_STRENGTH = 0.1;
 const TELEPORTER_RETRANSMIT_CLASSIC_FRAMES = 60;
 const TELEPORTER_SPEED_LIMIT_RATIO = 2.25;
 const TELEPORTER_DEFAULT_SOUND_ID = 410;
+const TELEPORTER_DEFAULT_VOLUME = 10;
+const TELEPORTER_SPIN_MOTOR_SCALE = 8;
+const TELEPORTER_FRAGMENT_COUNT = 10;
+const TELEPORTER_FRAGMENT_LIFETIME_CLASSIC_FRAMES = 8;
 const GUN_MOUNT_OFFSET_X = 0.25;
 const GUN_MOUNT_OFFSET_Y = 0;
 const GUN_MOUNT_OFFSET_Z = 0.75;
@@ -420,6 +426,9 @@ interface TeleporterState {
   transportGroup: string | null;
   destGroup: string | null;
   soundId: number;
+  volume: number;
+  spin: boolean;
+  fragment: boolean;
   useCount: number;
   goTimer: number;
   enabled: boolean;
@@ -1854,6 +1863,9 @@ function processTeleporters(room: RoomState): void {
         || distance < teleporter.deadRange
         || speed >= TELEPORTER_SPEED_LIMIT_RATIO * teleporter.activeRange
       ) {
+        if (distance < TELEPORTER_PULL_RANGE) {
+          applyTeleporterPull(player, teleporter);
+        }
         continue;
       }
 
@@ -1862,8 +1874,9 @@ function processTeleporters(room: RoomState): void {
         continue;
       }
 
-      applyTeleporterTransport(room, player, teleporter, destination);
-      break;
+      if (applyTeleporterTransport(room, player, teleporter, destination)) {
+        break;
+      }
     }
   }
 }
@@ -1891,16 +1904,38 @@ function applyTeleporterTransport(
   player: PlayerState,
   source: TeleporterState,
   destination: TeleporterState
-): void {
+): boolean {
+  destination.useCount += 1;
   const destinationFloor = sampleFloorHeight(room, destination.x, destination.z, destination.y + MAX_STEP_HEIGHT);
+  const destinationY = Math.max(destination.y, destinationFloor);
+  if (isBlocked(
+    room,
+    player,
+    { x: destination.x, y: destinationY, z: destination.z },
+    { x: destination.x, y: destinationY, z: destination.z }
+  )) {
+    return false;
+  }
+
+  const previousPosition = { x: player.x, y: player.y, z: player.z };
   player.x = destination.x;
-  player.y = Math.max(destination.y, destinationFloor);
+  player.y = destinationY;
   player.z = destination.z;
   player.vx = 0;
   player.vy = 0;
   player.vz = 0;
-  player.leftMotor = 0;
-  player.rightMotor = 0;
+  if (destination.fragment) {
+    spawnTeleportFragments(room, previousPosition, 0.3);
+    spawnTeleportFragments(room, { x: player.x, y: player.y, z: player.z }, 0.7);
+  }
+  if (destination.spin) {
+    const spinMotor = player.maxAcceleration * TELEPORTER_SPIN_MOTOR_SCALE;
+    player.leftMotor = spinMotor;
+    player.rightMotor = -spinMotor;
+  } else {
+    player.leftMotor = 0;
+    player.rightMotor = 0;
+  }
   player.strafeMotor = 0;
   player.bodyYaw = destination.yaw;
   player.turretYaw = destination.yaw;
@@ -1908,10 +1943,56 @@ function applyTeleporterTransport(
   player.jumpFlag = false;
 
   const cooldown = framesFromClassic(TELEPORTER_RETRANSMIT_CLASSIC_FRAMES, tickDeltaScale());
-  source.goTimer = cooldown;
   destination.goTimer = cooldown;
   source.useCount += 1;
-  destination.useCount += 1;
+  addEvent(room, {
+    event: "teleport",
+    actorPlayerId: player.id,
+    message: `${player.displayName} used teleporter`,
+    soundId: destination.soundId,
+    volume: destination.volume
+  });
+  return true;
+}
+
+function applyTeleporterPull(player: PlayerState, teleporter: TeleporterState): void {
+  const deltaX = player.x - teleporter.x;
+  const deltaY = player.y - teleporter.y;
+  const deltaZ = player.z - teleporter.z;
+  player.vx += deltaX * -TELEPORTER_PULL_STRENGTH;
+  player.vy += deltaY * -TELEPORTER_PULL_STRENGTH;
+  player.vz += deltaZ * -TELEPORTER_PULL_STRENGTH;
+}
+
+function spawnTeleportFragments(room: RoomState, origin: Vec3, baseSpeed: number): void {
+  const fpsScale = tickDeltaScale();
+  for (let index = 0; index < TELEPORTER_FRAGMENT_COUNT; index += 1) {
+    const direction = sampleExplosionFragmentDirection();
+    const speed = baseSpeed * (0.7 + Math.random() * 0.7);
+    const color = "#ffffff";
+    room.fragments.push({
+      id: `fragment_${crypto.randomUUID()}`,
+      x: origin.x,
+      y: origin.y,
+      z: origin.z,
+      vx: direction.x * speed,
+      vy: direction.y * speed,
+      vz: direction.z * speed,
+      remainingTicks: framesFromClassic(TELEPORTER_FRAGMENT_LIFETIME_CLASSIC_FRAMES, fpsScale),
+      yaw: Math.atan2(direction.z, direction.x),
+      pitch: Math.atan2(direction.y, Math.hypot(direction.x, direction.z) || 1),
+      roll: Math.random() * Math.PI * 2,
+      spin: (Math.random() - 0.5) * Math.PI * 4,
+      friction: FRAGMENT_FRICTION,
+      gravity: FRAGMENT_GRAVITY * 0.35,
+      shapeId: BSP_EXPLOSION_SLIVER.shapeId,
+      shapeKey: BSP_EXPLOSION_SLIVER.shapeKey,
+      shapeAssetUrl: BSP_EXPLOSION_SLIVER.shapeAssetUrl,
+      scale: 1,
+      color,
+      accentColor: "#bfbfbf"
+    });
+  }
 }
 
 function toggleScoutView(room: RoomState, player: PlayerState): void {
@@ -3439,6 +3520,9 @@ function deriveTeleporters(nodes: SceneNode[]): TeleporterState[] {
         transportGroup,
         destGroup,
         soundId: Math.max(0, Math.round(asNumber(meta.sound) ?? TELEPORTER_DEFAULT_SOUND_ID)),
+        volume: Math.max(0, asNumber(meta.volume) ?? TELEPORTER_DEFAULT_VOLUME),
+        spin: meta.spin === undefined ? true : Boolean(meta.spin),
+        fragment: meta.fragment === undefined ? true : Boolean(meta.fragment),
         useCount: 0,
         goTimer: 0,
         enabled

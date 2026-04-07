@@ -78,7 +78,6 @@ class AvaraSoundRuntime {
     this.processEvents(input.snapshot, input.localPlayerId);
     this.processFootsteps(input.snapshot, localPlayer);
     this.processProjectiles(input.snapshot, localPlayer);
-    this.processTransportHeuristic(input.snapshot, input.localPlayerId);
     this.previousSnapshot = input.snapshot;
   }
 
@@ -142,6 +141,15 @@ class AvaraSoundRuntime {
 
       if (event.event === "pickup" && event.actorPlayerId === localPlayerId) {
         this.playOneShot(DEFAULT_PICKUP_SOUND_ID, undefined, 0.38);
+        continue;
+      }
+
+      if (event.event === "teleport" && event.actorPlayerId === localPlayerId) {
+        this.playOneShot(
+          event.soundId ?? DEFAULT_TELEPORT_SOUND_ID,
+          undefined,
+          normalizeTeleportVolume(event.volume ?? 10)
+        );
       }
     }
   }
@@ -227,36 +235,6 @@ class AvaraSoundRuntime {
         );
       }
     }
-  }
-
-  private processTransportHeuristic(snapshot: SnapshotPacket, localPlayerId: string): void {
-    if (!this.scene?.nodes.some((node) => node.type === "teleporter")) {
-      return;
-    }
-
-    const previousPlayer = this.previousSnapshot?.players.find((player) => player.id === localPlayerId) ?? null;
-    const nextPlayer = snapshot.players.find((player) => player.id === localPlayerId) ?? null;
-    if (!previousPlayer || !nextPlayer || !previousPlayer.alive || !nextPlayer.alive) {
-      return;
-    }
-
-    const displacement = distanceBetween(previousPlayer, nextPlayer);
-    if (displacement < 14) {
-      return;
-    }
-
-    const previousNearTeleporter = this.scene.nodes.some(
-      (node) => node.type === "teleporter" && distanceBetween(node.position, previousPlayer) < 10
-    );
-    const nextNearTeleporter = this.scene.nodes.some(
-      (node) => node.type === "teleporter" && distanceBetween(node.position, nextPlayer) < 10
-    );
-    if (!previousNearTeleporter && !nextNearTeleporter) {
-      return;
-    }
-
-    const teleporterSoundId = resolveNearestTeleporterSound(this.scene, previousPlayer, nextPlayer);
-    this.playOneShot(teleporterSoundId, undefined, 0.48);
   }
 
   private startProjectileLoop(projectile: SnapshotProjectileState, localPlayer: SnapshotPlayerState | null): void {
@@ -420,6 +398,10 @@ function normalizeIncarnateVolume(volume: number): number {
   return clamp(volume / 15, 0, 0.9);
 }
 
+function normalizeTeleportVolume(volume: number): number {
+  return clamp(volume / 20, 0.18, 0.8);
+}
+
 function spatialVolume(listener: SnapshotPlayerState | null, source: Vector3Like, base: number): number {
   if (!listener) {
     return base;
@@ -436,26 +418,4 @@ function distanceBetween(left: Vector3Like, right: Vector3Like): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
-}
-
-function resolveNearestTeleporterSound(scene: LevelScene, previousPlayer: Vector3Like, nextPlayer: Vector3Like): number {
-  let closestSoundId = DEFAULT_TELEPORT_SOUND_ID;
-  let closestDistance = Number.POSITIVE_INFINITY;
-
-  for (const node of scene.nodes) {
-    if (node.type !== "teleporter") {
-      continue;
-    }
-
-    const nodeSoundId = typeof node.meta?.sound === "number" && node.meta.sound > 0
-      ? node.meta.sound
-      : DEFAULT_TELEPORT_SOUND_ID;
-    const distance = Math.min(distanceBetween(node.position, previousPlayer), distanceBetween(node.position, nextPlayer));
-    if (distance < closestDistance) {
-      closestDistance = distance;
-      closestSoundId = nodeSoundId;
-    }
-  }
-
-  return closestSoundId;
 }

@@ -12,6 +12,7 @@ export type MatchEventType =
   | "pickup"
   | "frag"
   | "respawn"
+  | "teleport"
   | "weapon_load"
   | "match_end";
 
@@ -172,6 +173,8 @@ export interface MatchEventState {
   actorPlayerId?: string;
   targetPlayerId?: string;
   message: string;
+  soundId?: number;
+  volume?: number;
 }
 
 export interface SnapshotPacket {
