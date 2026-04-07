@@ -78,7 +78,7 @@ const LIVE_ASSET_URLS = {
 } as const;
 const PRELOAD_ASSET_URLS = Object.values(LIVE_ASSET_URLS);
 const SCOUT_CAMERA_OFFSET = 0.1;
-const HECTOR_LEG_SPACE = 0.6;
+const HECTOR_LEG_SPACE = -0.6;
 const HECTOR_LEG_HIGH_LENGTH = 0.905;
 const HECTOR_LEG_LOW_LENGTH = 1.15;
 const HECTOR_DEFAULT_STANCE = 1.7;
@@ -568,6 +568,7 @@ export default function LevelViewport({
           playerLayer,
           heading.current.yaw,
           heading.current.pitch,
+          scoutViewActive,
           liveLocalPlayer,
           localPlayerIdRef.current
         );
@@ -1237,6 +1238,7 @@ function updateCannonReticleOverlay(
   playerLayer: THREE.Group,
   viewYaw: number,
   viewPitch: number,
+  scoutViewActive: boolean,
   player: SnapshotPlayerState | null,
   localPlayerId?: string
 ): void {
@@ -1253,9 +1255,13 @@ function updateCannonReticleOverlay(
 
   const width = mount.clientWidth;
   const height = mount.clientHeight;
-  const forwardDirection = directionFromYawPitch(viewYaw, viewPitch);
-  const upDirection = upVectorFromYawPitch(viewYaw, viewPitch);
-  const rightDirection = rightVectorFromYawPitch(viewYaw, viewPitch);
+  const reticleYaw = scoutViewActive
+    ? simulationYawToViewYaw(player.turretYaw)
+    : viewYaw;
+  const reticlePitch = scoutViewActive ? player.turretPitch : viewPitch;
+  const forwardDirection = directionFromYawPitch(reticleYaw, reticlePitch);
+  const upDirection = upVectorFromYawPitch(reticleYaw, reticlePitch);
+  const rightDirection = rightVectorFromYawPitch(reticleYaw, reticlePitch);
   const forward = SHARED_FORWARD_VECTOR.set(forwardDirection.x, forwardDirection.y, forwardDirection.z);
   const right = SHARED_RIGHT_VECTOR.set(rightDirection.x, rightDirection.y, rightDirection.z);
   const up = SHARED_UP_VECTOR.set(upDirection.x, upDirection.y, upDirection.z);
@@ -1451,7 +1457,7 @@ function updateWalkerAssemblyPose(root: THREE.Group, player: SnapshotPlayerState
   const elevation = player.stance ?? HECTOR_DEFAULT_STANCE;
   const crouch = player.crouch ?? 0;
   const headHeight = Math.max(0.95, elevation - crouch);
-  const yawDelta = normalizeAngle(player.turretYaw - player.bodyYaw);
+  const yawDelta = normalizeAngle(player.bodyYaw - player.turretYaw);
   const rideHeight = player.rideHeight ?? HECTOR_DEFAULT_RIDE_HEIGHT;
   const rig = root.getObjectByName("walker-rig");
   if (rig) {
@@ -1481,29 +1487,29 @@ function updateWalkerAssemblyPose(root: THREE.Group, player: SnapshotPlayerState
   }
 
   const legs = player.legs;
-  const leftLeg = legs?.[0];
-  const rightLeg = legs?.[1];
+  const rightLeg = legs?.[0];
+  const leftLeg = legs?.[1];
   const leftPose = leftLeg ? solveWalkerLegPose(headHeight, leftLeg) : { upperAngle: 0, lowerAngle: 0 };
   const rightPose = rightLeg ? solveWalkerLegPose(headHeight, rightLeg) : { upperAngle: 0, lowerAngle: 0 };
 
   const leftUpper = root.getObjectByName("walker-left-upper");
   if (leftUpper) {
-    applyNativeWalkerPartMatrix(leftUpper, buildNativeUpperLegMatrix(leftPose.upperAngle, false));
+    applyNativeWalkerPartMatrix(leftUpper, buildNativeUpperLegMatrix(leftPose.upperAngle, 1));
   }
 
   const rightUpper = root.getObjectByName("walker-right-upper");
   if (rightUpper) {
-    applyNativeWalkerPartMatrix(rightUpper, buildNativeUpperLegMatrix(rightPose.upperAngle, true));
+    applyNativeWalkerPartMatrix(rightUpper, buildNativeUpperLegMatrix(rightPose.upperAngle, 0));
   }
 
   const leftLower = root.getObjectByName("walker-left-lower");
   if (leftLower) {
-    applyNativeWalkerPartMatrix(leftLower, buildNativeLowerLegMatrix(leftPose.upperAngle, leftPose.lowerAngle, false));
+    applyNativeWalkerPartMatrix(leftLower, buildNativeLowerLegMatrix(leftPose.upperAngle, leftPose.lowerAngle, 1));
   }
 
   const rightLower = root.getObjectByName("walker-right-lower");
   if (rightLower) {
-    applyNativeWalkerPartMatrix(rightLower, buildNativeLowerLegMatrix(rightPose.upperAngle, rightPose.lowerAngle, true));
+    applyNativeWalkerPartMatrix(rightLower, buildNativeLowerLegMatrix(rightPose.upperAngle, rightPose.lowerAngle, 0));
   }
 }
 
@@ -1595,27 +1601,25 @@ function buildNativeHullMatrix(input: { rideHeight: number; viewYaw: number; vie
   return matrix;
 }
 
-function buildNativeUpperLegMatrix(highAngle: number, mirrored: boolean): NativeMatrix {
+function buildNativeUpperLegMatrix(highAngle: number, nativeLegIndex: 0 | 1): NativeMatrix {
   const matrix = createNativeIdentityMatrix();
   nativeInitialRotateX(matrix, highAngle);
-  if (mirrored) {
+  if (nativeLegIndex === 1) {
     nativePreFlipY(matrix);
-    nativeTranslateX(matrix, HECTOR_LEG_SPACE);
-  } else {
-    nativeTranslateX(matrix, -HECTOR_LEG_SPACE);
   }
+  nativeTranslateX(matrix, nativeLegIndex === 0 ? -HECTOR_LEG_SPACE : HECTOR_LEG_SPACE);
   return matrix;
 }
 
-function buildNativeLowerLegMatrix(highAngle: number, lowAngle: number, mirrored: boolean): NativeMatrix {
+function buildNativeLowerLegMatrix(highAngle: number, lowAngle: number, nativeLegIndex: 0 | 1): NativeMatrix {
   const matrix = createNativeIdentityMatrix();
   nativeInitialRotateX(matrix, lowAngle);
-  if (mirrored) {
+  if (nativeLegIndex === 1) {
     nativePreFlipY(matrix);
   }
   nativeTranslateY(matrix, -HECTOR_LEG_HIGH_LENGTH);
   nativeRotateX(matrix, highAngle);
-  nativeTranslateX(matrix, mirrored ? HECTOR_LEG_SPACE : -HECTOR_LEG_SPACE);
+  nativeTranslateX(matrix, nativeLegIndex === 0 ? -HECTOR_LEG_SPACE : HECTOR_LEG_SPACE);
   return matrix;
 }
 
