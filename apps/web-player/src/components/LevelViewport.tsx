@@ -83,7 +83,7 @@ const HECTOR_LEG_HIGH_LENGTH = 0.905;
 const HECTOR_LEG_LOW_LENGTH = 1.15;
 const HECTOR_DEFAULT_STANCE = 1.7;
 const HECTOR_DEFAULT_RIDE_HEIGHT = 0.2500038147554742;
-const HECTOR_HULL_VISUAL_LIFT = 0.15;
+const HECTOR_HULL_VISUAL_LIFT = 0.34;
 const PLAYER_HIT_CENTER_Y = 2.1;
 const VIEW_OFFSET_Y = -0.25;
 const GUN_MOUNT_OFFSET_X = 0.25;
@@ -100,7 +100,6 @@ const FIRST_PERSON_GRENADE_MOUNT_OFFSET = { x: 0, y: -0.16, z: -0.9 };
 const PLAYER_PLASMA_RANGE = 150;
 const PLAYER_PLASMA_FALLBACK_RANGE = PLAYER_PLASMA_RANGE / 4;
 const RETICLE_DISTANCE_OFFSET = 0.1;
-const RETICLE_UPDATE_INTERVAL_MS = 33;
 const SHARED_LERP_TARGET = new THREE.Vector3();
 const SHARED_FORWARD_VECTOR = new THREE.Vector3();
 const SHARED_RIGHT_VECTOR = new THREE.Vector3();
@@ -557,7 +556,7 @@ export default function LevelViewport({
 
       renderer.render(threeScene, camera);
 
-      if (!liveLocalPlayer || liveLocalPlayer.weaponLoad !== "cannon" || (now - lastReticleUpdateAt) >= RETICLE_UPDATE_INTERVAL_MS) {
+      if (!liveLocalPlayer || liveLocalPlayer.weaponLoad !== "cannon" || pointerLockedToArena || (now - lastReticleUpdateAt) >= 16) {
         lastReticleUpdateAt = now;
         updateCannonReticleOverlay(
           reticleRootRef.current,
@@ -567,6 +566,8 @@ export default function LevelViewport({
           camera,
           sceneRoot,
           playerLayer,
+          heading.current.yaw,
+          heading.current.pitch,
           liveLocalPlayer,
           localPlayerIdRef.current
         );
@@ -1234,6 +1235,8 @@ function updateCannonReticleOverlay(
   camera: THREE.PerspectiveCamera,
   sceneRoot: THREE.Group,
   playerLayer: THREE.Group,
+  viewYaw: number,
+  viewPitch: number,
   player: SnapshotPlayerState | null,
   localPlayerId?: string
 ): void {
@@ -1250,11 +1253,9 @@ function updateCannonReticleOverlay(
 
   const width = mount.clientWidth;
   const height = mount.clientHeight;
-  const turretViewYaw = simulationYawToViewYaw(player.turretYaw);
-  const turretPitch = player.turretPitch;
-  const forwardDirection = directionFromYawPitch(turretViewYaw, turretPitch);
-  const upDirection = upVectorFromYawPitch(turretViewYaw, turretPitch);
-  const rightDirection = rightVectorFromYawPitch(turretViewYaw, turretPitch);
+  const forwardDirection = directionFromYawPitch(viewYaw, viewPitch);
+  const upDirection = upVectorFromYawPitch(viewYaw, viewPitch);
+  const rightDirection = rightVectorFromYawPitch(viewYaw, viewPitch);
   const forward = SHARED_FORWARD_VECTOR.set(forwardDirection.x, forwardDirection.y, forwardDirection.z);
   const right = SHARED_RIGHT_VECTOR.set(rightDirection.x, rightDirection.y, rightDirection.z);
   const up = SHARED_UP_VECTOR.set(upDirection.x, upDirection.y, upDirection.z);
