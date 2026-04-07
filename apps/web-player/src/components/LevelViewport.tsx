@@ -83,9 +83,9 @@ const HECTOR_LEG_HIGH_LENGTH = 0.905;
 const HECTOR_LEG_LOW_LENGTH = 1.15;
 const HECTOR_DEFAULT_STANCE = 1.7;
 const HECTOR_DEFAULT_RIDE_HEIGHT = 0.2500038147554742;
-const HECTOR_HULL_VISUAL_LIFT = 0.56;
+const HECTOR_HULL_VISUAL_LIFT = 0;
 const HECTOR_CAMERA_LIFT = 0.34;
-const HECTOR_VISUAL_STAND_OFFSET = 0.22;
+const HECTOR_VISUAL_STAND_OFFSET = 0;
 const PLAYER_HIT_CENTER_Y = 2.1;
 const VIEW_OFFSET_Y = -0.25;
 const GUN_MOUNT_OFFSET_X = 0.25;
@@ -489,9 +489,9 @@ export default function LevelViewport({
         }
       }
       if (liveLocalPlayer && aimCallbackRef.current) {
-        const liveBodyViewYaw = simulationYawToViewYaw(liveLocalPlayer.bodyYaw);
+        const simulationViewYaw = viewYawToSimulationYaw(heading.current.yaw);
         aimCallbackRef.current({
-          aimYaw: THREE.MathUtils.clamp(normalizeAngle(heading.current.yaw - liveBodyViewYaw), -1.2, 1.2),
+          aimYaw: THREE.MathUtils.clamp(normalizeAngle(simulationViewYaw - liveLocalPlayer.bodyYaw), -1.2, 1.2),
           aimPitch: THREE.MathUtils.clamp(heading.current.pitch, -0.8, 0.5),
           viewYaw: heading.current.yaw
         });
@@ -1088,8 +1088,10 @@ function syncPlayerMeshes(
     }
 
     object.visible = player.alive;
-    object.userData.transformResponsiveness = player.id === localPlayerId ? 0.82 : 0.9;
-    const visualYaw = player.bodyYaw;
+    object.userData.transformResponsiveness = player.id === localPlayerId ? 1 : 0.9;
+    const visualYaw = object.userData.playerVisualKind === "walker"
+      ? simulationYawToViewYaw(player.bodyYaw)
+      : player.bodyYaw;
     queueObjectTransform(object, player.x, player.y, player.z, visualYaw);
     updatePlayerMarker(object, player);
   }
@@ -1498,8 +1500,8 @@ function createWalkerAssemblyMarker(player: SnapshotPlayerState, isLocal: boolea
 function updateWalkerAssemblyPose(root: THREE.Group, player: SnapshotPlayerState): void {
   const elevation = player.stance ?? HECTOR_DEFAULT_STANCE;
   const crouch = player.crouch ?? 0;
-  const headHeight = Math.max(0.95, elevation - crouch);
-  const yawDelta = normalizeAngle(player.turretYaw - player.bodyYaw);
+  const headHeight = Math.max(0.9, elevation - crouch);
+  const yawDelta = normalizeAngle(player.bodyYaw - player.turretYaw);
   const rideHeight = player.rideHeight ?? HECTOR_DEFAULT_RIDE_HEIGHT;
   const rig = root.getObjectByName("walker-rig");
   if (rig) {
@@ -2356,6 +2358,10 @@ function normalizeAngle(value: number): number {
 
 function simulationYawToViewYaw(simulationYaw: number): number {
   return normalizeAngle((Math.PI / 2) - simulationYaw);
+}
+
+function viewYawToSimulationYaw(viewYaw: number): number {
+  return normalizeAngle((Math.PI / 2) - viewYaw);
 }
 
 function directionFromYawPitch(yaw: number, pitch: number): { x: number; y: number; z: number } {

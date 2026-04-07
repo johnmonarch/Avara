@@ -1220,10 +1220,17 @@ function simulateWalkerMotors(room: RoomState, player: PlayerState, fpsScale: nu
   const analogHeadChange = fpsCoefficient2((player.rightMotor - player.leftMotor) * HECTOR_TURNING_EFFECT, fpsScale);
   const strafeDistance = player.strafeMotor;
   const modernizedMoving = Math.abs(distance) > 0.0001 || Math.abs(strafeDistance) > 0.0001;
-  const headChange = bodyYawTarget === undefined ? analogHeadChange : 0;
+  const targetHeadChange = bodyYawTarget === undefined
+    ? 0
+    : clamp(
+        targetHeadingDelta,
+        -fpsCoefficient2(HECTOR_TURNING_EFFECT * (modernizedMoving ? 2 : 1.5), fpsScale),
+        fpsCoefficient2(HECTOR_TURNING_EFFECT * (modernizedMoving ? 2 : 1.5), fpsScale)
+      );
+  const headChange = bodyYawTarget === undefined ? analogHeadChange : targetHeadChange;
   player.distance = Math.abs(distance) > 0.0001 ? distance : (Math.abs(strafeDistance) > 0.0001 ? strafeDistance : 0);
   player.headChange = Math.abs(headChange) < 0.00005 ? 0 : headChange;
-  const averageHeading = bodyYawTarget ?? (player.bodyYaw + analogHeadChange / 2);
+  const averageHeading = player.bodyYaw + (headChange / 2);
   const motorDirX = (Math.sin(averageHeading) * distance) + (Math.cos(averageHeading) * strafeDistance);
   const motorDirZ = (Math.cos(averageHeading) * distance) - (Math.sin(averageHeading) * strafeDistance);
   const supportTraction = player.supportTraction;
@@ -1247,7 +1254,7 @@ function simulateWalkerMotors(room: RoomState, player: PlayerState, fpsScale: nu
   player.vy -= slowdown * player.vy;
   player.vz -= slowdown * player.vz;
 
-  player.bodyYaw = bodyYawTarget ?? normalizeAngle(player.bodyYaw + analogHeadChange);
+  player.bodyYaw = normalizeAngle(player.bodyYaw + headChange);
 }
 
 function simulateWalkerVertical(room: RoomState, player: PlayerState, fpsScale: number): void {

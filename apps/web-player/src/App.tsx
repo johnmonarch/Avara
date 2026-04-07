@@ -612,7 +612,7 @@ export function App() {
         }
       } finally {
         if (!cancelled) {
-          inputTimer = window.setTimeout(() => void runInputLoop(room, playerId), visibilityRef.current ? 250 : 50);
+          inputTimer = window.setTimeout(() => void runInputLoop(room, playerId), visibilityRef.current ? 250 : 33);
         }
       }
     };
@@ -629,7 +629,7 @@ export function App() {
         }
       } finally {
         if (!cancelled) {
-          snapshotTimer = window.setTimeout(() => void runSnapshotLoop(room), visibilityRef.current ? 900 : 120);
+          snapshotTimer = window.setTimeout(() => void runSnapshotLoop(room), visibilityRef.current ? 900 : 80);
         }
       }
     };
@@ -1445,13 +1445,12 @@ function buildCombatInput(
     (isBindingActive(keys, bindings.turnRight) ? 1 : 0) +
     (isBindingActive(keys, bindings.turnLeft) ? -1 : 0);
   const modernizedPointerSteer = settings.controlPreset === "modernized";
-  const carriedAimYaw = modernizedPointerSteer ? 0 : look.aimYaw;
   const payload = {
     moveForward,
     strafe: settings.controlPreset === "modernized" ? clamp(strafe, -1, 1) : 0,
     bodyYawTarget: modernizedPointerSteer ? viewYawToSimulationYaw(look.viewYaw) : undefined,
     turnBody: modernizedPointerSteer ? 0 : clamp(keyTurn, -1, 1),
-    aimYaw: carriedAimYaw,
+    aimYaw: look.aimYaw,
     aimPitch: look.aimPitch,
     stanceDelta: stanceDeltaRef.current,
     primaryFire: primaryFire || isBindingActive(keys, bindings.primaryFireKeys),
