@@ -2162,7 +2162,7 @@ function spawnProjectile(
   const isPlasma = kind === "plasma";
   const shape = isPlasma ? BSP_PLASMA : isMissile ? BSP_MISSILE : BSP_GRENADE;
   const mountOffset = isPlasma
-    ? { x: leftGun ? GUN_MOUNT_OFFSET_X : -GUN_MOUNT_OFFSET_X, y: GUN_MOUNT_OFFSET_Y, z: GUN_MOUNT_OFFSET_Z }
+    ? { x: leftGun ? -GUN_MOUNT_OFFSET_X : GUN_MOUNT_OFFSET_X, y: GUN_MOUNT_OFFSET_Y, z: GUN_MOUNT_OFFSET_Z }
     : isMissile
       ? SMART_MISSILE_MOUNT_OFFSET
       : GRENADE_MOUNT_OFFSET;
@@ -3853,9 +3853,9 @@ function rightVectorFromYawPitch(yaw: number, pitch: number) {
   const forward = directionFromYawPitch(yaw, pitch);
   const up = upVectorFromYawPitch(yaw, pitch);
   const right = {
-    x: forward.y * up.z - forward.z * up.y,
-    y: forward.z * up.x - forward.x * up.z,
-    z: forward.x * up.y - forward.y * up.x
+    x: up.y * forward.z - up.z * forward.y,
+    y: up.z * forward.x - up.x * forward.z,
+    z: up.x * forward.y - up.y * forward.x
   };
   const length = Math.hypot(right.x, right.y, right.z) || 1;
   return {

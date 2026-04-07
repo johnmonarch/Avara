@@ -426,7 +426,7 @@ export default function LevelViewport({
       const pitchDelta = event.movementY * pitchScale * pitchDirection;
       const verticalMotionActive = verticalMotionCheckRef.current?.() ?? false;
 
-      heading.current.yaw += event.movementX * yawScale;
+      heading.current.yaw -= event.movementX * yawScale;
       if (verticalMotionActive) {
         stanceAdjustRef.current?.(event.movementY * 0.002 * settingsRef.current.sensitivity * pitchDirection);
         return;
@@ -1600,9 +1600,9 @@ function buildNativeUpperLegMatrix(highAngle: number, mirrored: boolean): Native
   nativeInitialRotateX(matrix, highAngle);
   if (mirrored) {
     nativePreFlipY(matrix);
-    nativeTranslateX(matrix, -HECTOR_LEG_SPACE);
-  } else {
     nativeTranslateX(matrix, HECTOR_LEG_SPACE);
+  } else {
+    nativeTranslateX(matrix, -HECTOR_LEG_SPACE);
   }
   return matrix;
 }
@@ -1615,7 +1615,7 @@ function buildNativeLowerLegMatrix(highAngle: number, lowAngle: number, mirrored
   }
   nativeTranslateY(matrix, -HECTOR_LEG_HIGH_LENGTH);
   nativeRotateX(matrix, highAngle);
-  nativeTranslateX(matrix, mirrored ? -HECTOR_LEG_SPACE : HECTOR_LEG_SPACE);
+  nativeTranslateX(matrix, mirrored ? HECTOR_LEG_SPACE : -HECTOR_LEG_SPACE);
   return matrix;
 }
 
@@ -2323,9 +2323,9 @@ function rightVectorFromYawPitch(yaw: number, pitch: number): { x: number; y: nu
   const forward = directionFromYawPitch(yaw, pitch);
   const up = upVectorFromYawPitch(yaw, pitch);
   const right = {
-    x: forward.y * up.z - forward.z * up.y,
-    y: forward.z * up.x - forward.x * up.z,
-    z: forward.x * up.y - forward.y * up.x
+    x: up.y * forward.z - up.z * forward.y,
+    y: up.z * forward.x - up.x * forward.z,
+    z: up.x * forward.y - up.y * forward.x
   };
   const length = Math.hypot(right.x, right.y, right.z) || 1;
   return {
