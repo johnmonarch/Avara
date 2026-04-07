@@ -1622,9 +1622,17 @@ function isBlocked(
       continue;
     }
 
+    const blockerHeight = blocker.topY - blocker.baseY;
+
     // When the walker is already on top of a platform, its side walls should not
     // behave like a blocking fence at foot level while stepping off the edge.
     if (blocker.topY <= Math.min(start.y, end.y) + 0.08) {
+      continue;
+    }
+
+    // Thin pickup pads and deck caps in classic maps are effectively step-up tops,
+    // not shoulder-height blocking walls. Let the floor sampler handle those.
+    if (blockerHeight <= 0.2 && blocker.topY <= Math.min(start.y, end.y) + MAX_STEP_HEIGHT + 0.05) {
       continue;
     }
 

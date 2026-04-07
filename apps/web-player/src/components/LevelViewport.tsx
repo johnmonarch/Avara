@@ -289,7 +289,7 @@ export default function LevelViewport({
     }
 
     heading.current = {
-      yaw: localPlayer.turretYaw,
+      yaw: simulationYawToViewYaw(localPlayer.turretYaw),
       pitch: localPlayer.turretPitch
     };
     boundPlayerIdRef.current = localPlayer.id;
@@ -1394,41 +1394,31 @@ function createWalkerAssemblyMarker(player: SnapshotPlayerState, isLocal: boolea
   hullPivot.name = "walker-hull";
   hullPivot.matrixAutoUpdate = false;
   rig.add(hullPivot);
-  attachBspRenderable(hullPivot, player.shapeAssetUrl ?? LIVE_ASSET_URLS.hector, palette, {
-    preRotateY: BSP_FORWARD_YAW_OFFSET
-  });
+  attachBspRenderable(hullPivot, player.shapeAssetUrl ?? LIVE_ASSET_URLS.hector, palette);
 
   const leftUpper = new THREE.Group();
   leftUpper.name = "walker-left-upper";
   leftUpper.matrixAutoUpdate = false;
   rig.add(leftUpper);
-  attachBspRenderable(leftUpper, LIVE_ASSET_URLS.hectorLegHigh, palette, {
-    preRotateY: BSP_FORWARD_YAW_OFFSET
-  });
+  attachBspRenderable(leftUpper, LIVE_ASSET_URLS.hectorLegHigh, palette);
 
   const rightUpper = new THREE.Group();
   rightUpper.name = "walker-right-upper";
   rightUpper.matrixAutoUpdate = false;
   rig.add(rightUpper);
-  attachBspRenderable(rightUpper, LIVE_ASSET_URLS.hectorLegHigh, palette, {
-    preRotateY: BSP_FORWARD_YAW_OFFSET
-  });
+  attachBspRenderable(rightUpper, LIVE_ASSET_URLS.hectorLegHigh, palette);
 
   const leftLower = new THREE.Group();
   leftLower.name = "walker-left-lower";
   leftLower.matrixAutoUpdate = false;
   rig.add(leftLower);
-  attachBspRenderable(leftLower, LIVE_ASSET_URLS.hectorLegLow, palette, {
-    preRotateY: BSP_FORWARD_YAW_OFFSET
-  });
+  attachBspRenderable(leftLower, LIVE_ASSET_URLS.hectorLegLow, palette);
 
   const rightLower = new THREE.Group();
   rightLower.name = "walker-right-lower";
   rightLower.matrixAutoUpdate = false;
   rig.add(rightLower);
-  attachBspRenderable(rightLower, LIVE_ASSET_URLS.hectorLegLow, palette, {
-    preRotateY: BSP_FORWARD_YAW_OFFSET
-  });
+  attachBspRenderable(rightLower, LIVE_ASSET_URLS.hectorLegLow, palette);
 
   const loadedMissile = new THREE.Group();
   loadedMissile.name = "walker-loaded-missile";
@@ -1438,9 +1428,7 @@ function createWalkerAssemblyMarker(player: SnapshotPlayerState, isLocal: boolea
     SMART_MISSILE_MOUNT_OFFSET.z
   );
   hullPivot.add(loadedMissile);
-  attachBspRenderable(loadedMissile, LIVE_ASSET_URLS.missile, createProjectilePalette("missile"), {
-    preRotateY: BSP_FORWARD_YAW_OFFSET
-  });
+  attachBspRenderable(loadedMissile, LIVE_ASSET_URLS.missile, createProjectilePalette("missile"));
 
   const loadedGrenade = new THREE.Group();
   loadedGrenade.name = "walker-loaded-grenade";
@@ -1450,9 +1438,7 @@ function createWalkerAssemblyMarker(player: SnapshotPlayerState, isLocal: boolea
     GRENADE_MOUNT_OFFSET.z
   );
   hullPivot.add(loadedGrenade);
-  attachBspRenderable(loadedGrenade, LIVE_ASSET_URLS.grenade, createProjectilePalette("grenade"), {
-    preRotateY: BSP_FORWARD_YAW_OFFSET
-  });
+  attachBspRenderable(loadedGrenade, LIVE_ASSET_URLS.grenade, createProjectilePalette("grenade"));
 
   updateWalkerAssemblyPose(root, player);
   return root;
@@ -1675,9 +1661,7 @@ function createFirstPersonCockpitRig(): THREE.Group {
     FIRST_PERSON_SMART_MISSILE_MOUNT_OFFSET.z
   );
   hullAnchor.add(loadedMissile);
-  attachBspRenderable(loadedMissile, LIVE_ASSET_URLS.missile, createProjectilePalette("missile"), {
-    preRotateY: BSP_FORWARD_YAW_OFFSET
-  });
+  attachBspRenderable(loadedMissile, LIVE_ASSET_URLS.missile, createProjectilePalette("missile"));
 
   const loadedGrenade = new THREE.Group();
   loadedGrenade.name = "first-person-loaded-grenade";
@@ -1687,9 +1671,7 @@ function createFirstPersonCockpitRig(): THREE.Group {
     FIRST_PERSON_GRENADE_MOUNT_OFFSET.z
   );
   hullAnchor.add(loadedGrenade);
-  attachBspRenderable(loadedGrenade, LIVE_ASSET_URLS.grenade, createProjectilePalette("grenade"), {
-    preRotateY: BSP_FORWARD_YAW_OFFSET
-  });
+  attachBspRenderable(loadedGrenade, LIVE_ASSET_URLS.grenade, createProjectilePalette("grenade"));
 
   return root;
 }
