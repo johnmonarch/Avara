@@ -83,6 +83,8 @@ const HECTOR_LEG_HIGH_LENGTH = 0.905;
 const HECTOR_LEG_LOW_LENGTH = 1.15;
 const HECTOR_DEFAULT_STANCE = 1.7;
 const HECTOR_DEFAULT_RIDE_HEIGHT = 0.2500038147554742;
+const HECTOR_HULL_VISUAL_LIFT = 0.15;
+const PLAYER_HIT_CENTER_Y = 2.1;
 const VIEW_OFFSET_Y = -0.25;
 const GUN_MOUNT_OFFSET_X = 0.25;
 const GUN_MOUNT_OFFSET_Y = 0;
@@ -104,6 +106,7 @@ const SHARED_FORWARD_VECTOR = new THREE.Vector3();
 const SHARED_RIGHT_VECTOR = new THREE.Vector3();
 const SHARED_UP_VECTOR = new THREE.Vector3();
 const SHARED_PROJECTED_POINT = new THREE.Vector3();
+const SHARED_PLAYER_ORIGIN = new THREE.Vector3();
 const SHARED_RAY_ORIGIN = new THREE.Vector3();
 const SHARED_TARGET_POINT = new THREE.Vector3();
 const SHARED_FORWARD_AXIS = new THREE.Vector3(0, 0, 1);
@@ -564,8 +567,6 @@ export default function LevelViewport({
           camera,
           sceneRoot,
           playerLayer,
-          heading.current.yaw,
-          heading.current.pitch,
           liveLocalPlayer,
           localPlayerIdRef.current
         );
@@ -1233,8 +1234,6 @@ function updateCannonReticleOverlay(
   camera: THREE.PerspectiveCamera,
   sceneRoot: THREE.Group,
   playerLayer: THREE.Group,
-  viewYaw: number,
-  viewPitch: number,
   player: SnapshotPlayerState | null,
   localPlayerId?: string
 ): void {
@@ -1251,18 +1250,21 @@ function updateCannonReticleOverlay(
 
   const width = mount.clientWidth;
   const height = mount.clientHeight;
-  const forwardDirection = directionFromYawPitch(viewYaw, viewPitch);
-  const upDirection = upVectorFromYawPitch(viewYaw, viewPitch);
-  const rightDirection = rightVectorFromYawPitch(viewYaw, viewPitch);
+  const turretViewYaw = simulationYawToViewYaw(player.turretYaw);
+  const turretPitch = player.turretPitch;
+  const forwardDirection = directionFromYawPitch(turretViewYaw, turretPitch);
+  const upDirection = upVectorFromYawPitch(turretViewYaw, turretPitch);
+  const rightDirection = rightVectorFromYawPitch(turretViewYaw, turretPitch);
   const forward = SHARED_FORWARD_VECTOR.set(forwardDirection.x, forwardDirection.y, forwardDirection.z);
   const right = SHARED_RIGHT_VECTOR.set(rightDirection.x, rightDirection.y, rightDirection.z);
   const up = SHARED_UP_VECTOR.set(upDirection.x, upDirection.y, upDirection.z);
+  const playerOrigin = SHARED_PLAYER_ORIGIN.set(player.x, player.y + PLAYER_HIT_CENTER_Y, player.z);
 
   SHARED_RETICLE_RAYCASTER.far = PLAYER_PLASMA_RANGE;
 
   const updateBracket = (element: HTMLSpanElement, side: "left" | "right") => {
     const origin = SHARED_RAY_ORIGIN
-      .copy(camera.position)
+      .copy(playerOrigin)
       .addScaledVector(right, side === "left" ? -GUN_MOUNT_OFFSET_X : GUN_MOUNT_OFFSET_X)
       .addScaledVector(up, GUN_MOUNT_OFFSET_Y)
       .addScaledVector(forward, GUN_MOUNT_OFFSET_Z);
@@ -1588,7 +1590,7 @@ function buildNativeHullMatrix(input: { rideHeight: number; viewYaw: number; vie
   nativeInitialRotateZ(matrix, input.viewYaw / -6);
   nativeRotateX(matrix, input.viewPitch);
   nativeRotateY(matrix, input.viewYaw);
-  nativeTranslateY(matrix, input.rideHeight);
+  nativeTranslateY(matrix, input.rideHeight + HECTOR_HULL_VISUAL_LIFT);
   return matrix;
 }
 
@@ -1801,14 +1803,21 @@ function buildPaletteRenderableGroup(
 function getPlayerViewTargetHeight(player: SnapshotPlayerState): number {
   return Math.max(
     1.6,
-    (player.stance ?? HECTOR_DEFAULT_STANCE) - (player.crouch ?? 0) + (player.rideHeight ?? HECTOR_DEFAULT_RIDE_HEIGHT)
+    (player.stance ?? HECTOR_DEFAULT_STANCE)
+      - (player.crouch ?? 0)
+      + (player.rideHeight ?? HECTOR_DEFAULT_RIDE_HEIGHT)
+      + HECTOR_HULL_VISUAL_LIFT
   );
 }
 
 function getPlayerCameraOriginHeight(player: SnapshotPlayerState): number {
   return Math.max(
     1.1,
-    (player.stance ?? HECTOR_DEFAULT_STANCE) - (player.crouch ?? 0) + (player.rideHeight ?? HECTOR_DEFAULT_RIDE_HEIGHT) + VIEW_OFFSET_Y
+    (player.stance ?? HECTOR_DEFAULT_STANCE)
+      - (player.crouch ?? 0)
+      + (player.rideHeight ?? HECTOR_DEFAULT_RIDE_HEIGHT)
+      + HECTOR_HULL_VISUAL_LIFT
+      + VIEW_OFFSET_Y
   );
 }
 
