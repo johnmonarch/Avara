@@ -91,7 +91,6 @@ const HECTOR_LEG_LOW_LENGTH = 1.15;
 const HECTOR_MAX_LEG_LENGTH = 2;
 const HECTOR_LEG_SCAN_HEIGHT = 0.2;
 const HECTOR_CONTACT_HEIGHT = 0.1;
-const HECTOR_IDLE_MOTION_EPSILON = 0.01;
 const PLAYER_COLLISION_TOP_PADDING = 0.45;
 const PLAYER_COLLISION_SAMPLE_PADDING = 0.12;
 const BOOST_LENGTH_CLASSIC_FRAMES = 16 * 5;
@@ -119,9 +118,11 @@ const SCOUT_SPAWN_PLATFORM = 1.5;
 const SCOUT_COLLISION_RADIUS = 1.2;
 const TELEPORTER_DEFAULT_ACTIVE_RANGE = 3.5;
 const TELEPORTER_DEFAULT_DEAD_RANGE = 0;
-const TELEPORTER_PULL_RANGE = 30;
+const TELEPORTER_PULL_RANGE = 3;
 const TELEPORTER_PULL_STRENGTH = 0.1;
 const TELEPORTER_RETRANSMIT_CLASSIC_FRAMES = 60;
+const TELEPORTER_PULL_BURST_CLASSIC_FRAMES = 32;
+const TELEPORTER_PULL_COOLDOWN_CLASSIC_FRAMES = 16;
 const TELEPORTER_SPEED_LIMIT_RATIO = 2.25;
 const TELEPORTER_DEFAULT_SOUND_ID = 410;
 const TELEPORTER_DEFAULT_VOLUME = 10;
@@ -431,6 +432,8 @@ interface TeleporterState {
   fragment: boolean;
   useCount: number;
   goTimer: number;
+  pullCounter: number;
+  noPullTimer: number;
   enabled: boolean;
 }
 
@@ -1374,15 +1377,6 @@ function updateWalkerLegContacts(room: RoomState, player: PlayerState, fpsScale:
   const sinHeading = Math.sin(player.bodyYaw);
   const cosHeading = Math.cos(player.bodyYaw);
 
-  if (
-    player.absAvgSpeed < HECTOR_IDLE_MOTION_EPSILON
-    && Math.abs(player.distance) < HECTOR_IDLE_MOTION_EPSILON
-    && Math.abs(player.headChange) < HECTOR_IDLE_MOTION_EPSILON
-  ) {
-    stabilizeWalkerIdleLegs(room, player, elevation, headHeight, sinHeading, cosHeading);
-    return;
-  }
-
   const phaseChange = player.absAvgSpeed > 0.000001
     ? (Math.sqrt(player.absAvgSpeed) * 0.91) / Math.max(elevation, 0.000001)
     : 0;
@@ -1441,51 +1435,6 @@ function updateWalkerLegContacts(room: RoomState, player: PlayerState, fpsScale:
     leg.lowAngle = solvedAngles.lowAngle;
 
     legPhase += Math.PI;
-  }
-}
-
-function stabilizeWalkerIdleLegs(
-  room: RoomState,
-  player: PlayerState,
-  elevation: number,
-  headHeight: number,
-  sinHeading: number,
-  cosHeading: number
-): void {
-  player.legPhase = 0;
-  player.absAvgSpeed = 0;
-  player.distance = 0;
-  player.headChange = 0;
-
-  for (let index = 0; index < 2; index += 1) {
-    const leg = player.legs[index];
-    const tempX = index === 0 ? -HECTOR_LEG_SPACE_ABS : HECTOR_LEG_SPACE_ABS;
-    const worldX = player.x - (tempX * cosHeading);
-    const worldZ = player.z + (tempX * sinHeading);
-    const footScanHeight = player.y + HECTOR_LEG_SCAN_HEIGHT + (elevation / 2);
-    const contactY = sampleFloorHeight(room, worldX, worldZ, footScanHeight);
-
-    if ((contactY - player.y) < -player.speedLimit) {
-      player.speedLimit = -(contactY - player.y);
-    }
-
-    if (contactY > player.targetHeight) {
-      player.targetHeight = contactY;
-    }
-    if (contactY + HECTOR_CONTACT_HEIGHT >= player.y) {
-      player.tractionFlag = true;
-    }
-
-    leg.x = 0;
-    leg.y = contactY - player.y;
-    leg.touching = true;
-    leg.whereX = worldX;
-    leg.whereY = contactY;
-    leg.whereZ = worldZ;
-
-    const solvedAngles = solveWalkerLegAngles(headHeight, leg);
-    leg.highAngle = solvedAngles.highAngle;
-    leg.lowAngle = solvedAngles.lowAngle;
   }
 }
 
@@ -1820,6 +1769,9 @@ function processTeleporters(room: RoomState): void {
     if (teleporter.goTimer > 0) {
       teleporter.goTimer -= 1;
     }
+    if (teleporter.noPullTimer > 0) {
+      teleporter.noPullTimer -= 1;
+    }
   }
 
   for (const player of room.players.values()) {
@@ -1828,7 +1780,7 @@ function processTeleporters(room: RoomState): void {
     }
 
     for (const teleporter of room.teleporters) {
-      if (!teleporter.enabled || teleporter.goTimer > 0 || !teleporter.destGroup) {
+      if (!teleporter.enabled) {
         continue;
       }
 
@@ -1839,14 +1791,26 @@ function processTeleporters(room: RoomState): void {
       );
       const speed = Math.hypot(player.vx, player.vy, player.vz);
 
+      if (teleporter.goTimer > 0) {
+        continue;
+      }
+
       if (
         distance >= teleporter.activeRange
         || distance < teleporter.deadRange
         || speed >= TELEPORTER_SPEED_LIMIT_RATIO * teleporter.activeRange
       ) {
-        if (distance < TELEPORTER_PULL_RANGE) {
+        if (distance < TELEPORTER_PULL_RANGE && teleporter.noPullTimer <= 0) {
           applyTeleporterPull(player, teleporter);
         }
+        if (distance > TELEPORTER_PULL_RANGE) {
+          teleporter.pullCounter = 0;
+          teleporter.noPullTimer = 0;
+        }
+        continue;
+      }
+
+      if (!teleporter.destGroup) {
         continue;
       }
 
@@ -1937,12 +1901,19 @@ function applyTeleporterTransport(
 }
 
 function applyTeleporterPull(player: PlayerState, teleporter: TeleporterState): void {
+  const burstFrames = framesFromClassic(TELEPORTER_PULL_BURST_CLASSIC_FRAMES, tickDeltaScale());
+  const cooldownFrames = framesFromClassic(TELEPORTER_PULL_COOLDOWN_CLASSIC_FRAMES, tickDeltaScale());
   const deltaX = player.x - teleporter.x;
   const deltaY = player.y - teleporter.y;
   const deltaZ = player.z - teleporter.z;
   player.vx += deltaX * -TELEPORTER_PULL_STRENGTH;
   player.vy += deltaY * -TELEPORTER_PULL_STRENGTH;
   player.vz += deltaZ * -TELEPORTER_PULL_STRENGTH;
+  teleporter.pullCounter += 1;
+  if (teleporter.pullCounter >= burstFrames) {
+    teleporter.pullCounter = 0;
+    teleporter.noPullTimer = cooldownFrames;
+  }
 }
 
 function spawnTeleportFragments(room: RoomState, origin: Vec3, baseSpeed: number): void {
@@ -3506,6 +3477,8 @@ function deriveTeleporters(nodes: SceneNode[]): TeleporterState[] {
         fragment: meta.fragment === undefined ? true : Boolean(meta.fragment),
         useCount: 0,
         goTimer: 0,
+        pullCounter: 0,
+        noPullTimer: 0,
         enabled
       };
     });

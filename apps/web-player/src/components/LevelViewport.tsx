@@ -1090,7 +1090,7 @@ function syncPlayerMeshes(
     object.visible = player.alive;
     object.userData.transformResponsiveness = player.id === localPlayerId ? 1 : 0.9;
     const visualYaw = object.userData.playerVisualKind === "walker"
-      ? simulationYawToViewYaw(player.bodyYaw)
+      ? player.bodyYaw
       : player.bodyYaw;
     queueObjectTransform(object, player.x, player.y, player.z, visualYaw);
     updatePlayerMarker(object, player);
